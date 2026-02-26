@@ -1,0 +1,24 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #1A0800;
+  touch-action: none;
+}
+
+#gameCanvas {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  cursor: crosshair;
+}

@@ -1,0 +1,19 @@
+{
+  "appId": "com.westernshooter.mobile",
+  "appName": "Western Shooter",
+  "webDir": ".",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 0,
+      "backgroundColor": "#1A0800"
+    },
+    "StatusBar": {
+      "style": "dark",
+      "backgroundColor": "#1A0800"
+    }
+  }
+}
