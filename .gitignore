@@ -1,6 +1,11 @@
 node_modules/
 android/
-ios/
 dist/
 .DS_Store
 *.log
+
+# Xcode derived data / build artefacts (keep ios/ source in version control)
+ios/WesternShooterApp.xcodeproj/xcuserdata/
+ios/WesternShooterApp.xcodeproj/project.xcworkspace/xcuserdata/
+ios/build/
+ios/*.xcworkspace/xcuserdata/
