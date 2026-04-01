@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive icon foreground — sheriff star on transparent background -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer star ring -->
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M54,22 L59,40 L78,40 L63,51 L68,69 L54,58 L40,69 L45,51 L30,40 L49,40 Z" />
+    <!-- Inner highlight -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:alpha="0.3"
+        android:pathData="M54,30 L57,41 L69,41 L60,48 L63,59 L54,52 L45,59 L48,48 L39,41 L51,41 Z" />
+</vector>

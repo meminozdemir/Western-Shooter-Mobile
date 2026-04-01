@@ -2,11 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <!--
+    user-scalable=no prevents pinch-to-zoom from breaking the game's own scaling logic.
+    viewport-fit=cover extends the canvas into the safe-area insets on notched/cutout devices.
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#3D1F00" />
+  <!-- Hint the browser/WebView that landscape is the preferred orientation -->
+  <meta name="screen-orientation" content="landscape" />
   <title>Western Shooter</title>
   <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="style.css" />

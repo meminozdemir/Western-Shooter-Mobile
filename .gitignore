@@ -1,6 +1,15 @@
 node_modules/
-android/
 ios/
 dist/
 .DS_Store
 *.log
+
+# Android build artifacts (keep source files, ignore generated output)
+android/.gradle/
+android/build/
+android/app/build/
+android/app/src/main/assets/public/
+android/local.properties
+android/.idea/
+android/*.iml
+android/**/*.iml
