@@ -1,0 +1,31 @@
+{
+	"appId": "com.westernshooter.mobile",
+	"appName": "Western Shooter",
+	"webDir": "www",
+	"server": {
+		"androidScheme": "https"
+	},
+	"android": {
+		"allowMixedContent": false,
+		"captureInput": true,
+		"webContentsDebuggingEnabled": false,
+		"loggingBehavior": "none"
+	},
+	"plugins": {
+		"SplashScreen": {
+			"launchShowDuration": 0,
+			"backgroundColor": "#1A0800",
+			"androidSplashResourceName": "splash",
+			"androidScaleType": "CENTER_CROP",
+			"showSpinner": false
+		},
+		"StatusBar": {
+			"style": "dark",
+			"backgroundColor": "#1A0800",
+			"overlaysWebView": true
+		},
+		"Keyboard": {
+			"resize": "none"
+		}
+	}
+}

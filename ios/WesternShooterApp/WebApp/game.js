@@ -1,10 +1,10 @@
 /**
- * Western Shooter — Mobile Game
- * Pure HTML5 Canvas + Vanilla JavaScript
- * Responsive design: scales to fill any screen (portrait or landscape).
- *
- * Controls (touch): tap an enemy to shoot it; tap RELOAD (or tap when empty) to reload.
- * Controls (mouse):  click to shoot / reload (desktop fallback).
+ * Offline Shooter — Mobile Game v7
+ * FPS-style arcade shooter with bottom-center revolver,
+ * authentic batwing saloon doors (low, open top),
+ * round tables, visible piano + pianist, shatterable bottles,
+ * synthesized audio (ragtime, gunshots, door creak, glass shatter).
+ * Pure HTML5 Canvas + Web Audio API, fully offline.
  */
 'use strict';
 
@@ -12,86 +12,326 @@
 const W = 480;
 const H = 720;
 const MAX_BULLETS = 6;
-const RELOAD_TIME = 2.0;   // seconds
+const RELOAD_TIME = 2.0;
 const MAX_LIVES   = 3;
+const CIV_PENALTY = 500;
 
-// OTS Gun — Colt Peacemaker proportions
-const GUN_ARM_LEN          = 140;   // sleeve length: pivot → grip (px)
-const GUN_BARREL_LEN       = 82;    // barrel extension beyond grip (px)
-const GUN_MIN_ANGLE        = -Math.PI + 0.15; // leftmost aim angle (rad)
-const GUN_MAX_ANGLE        = -0.18;           // rightmost aim angle (rad)
-const RECOIL_DURATION      = 0.20;  // seconds for full recoil cycle
-const RECOIL_MAX_DIST      = 22;    // max backward shift during recoil (px)
-const RECOIL_MAX_ANGLE     = 0.08;  // max upward angular kick during recoil (rad)
-const CYLINDER_ROT_SPEED   = 0.35;  // cylinder idle rotation speed (rad/s)
+// FPS gun anchor
+const GUN_ANCHOR_X = W / 2;
+const GUN_ANCHOR_Y = H + 30;
+const GUN_AIM_LERP = 8;
+const GUN_PAN_X    = 50;
+const GUN_PAN_Y    = 25;
+const RECOIL_DUR   = 0.18;
+const RECOIL_KICK  = 18;
 
-// Bar-door position (enemies enter from here)
-const DOOR_CX = 412;
-const DOOR_CY  = 318;
-const DOOR_W   = 76;
-const DOOR_H   = 155;
+// Scene layout
+const CEILING_Y    = 0;
+const BALCONY_Y    = 90;
+const RAIL_Y       = 120;
+const WALL_TOP     = RAIL_Y + 8;
+const BAR_Y        = 330;
+const BAR_H        = 50;
+const FLOOR_Y      = BAR_Y + BAR_H + 10;
+const DOOR_CX      = W / 2;
+const DOOR_TOP     = 155;
+const DOOR_BOT     = 320;
+const DOOR_W       = 90;
 
-// Cover slots (barrels & tables enemies hide behind)
-// x,y = centre; w,h = full extent of the object
-const COVERS = [
-  { id: 0, x:  78, y: 410, w: 90,  h: 112, type: 'barrel' },
-  { id: 1, x: 200, y: 405, w: 134, h:  92, type: 'table'  },
-  { id: 2, x: 308, y: 405, w: 134, h:  92, type: 'table'  },
-  { id: 3, x: 420, y: 410, w: 90,  h: 112, type: 'barrel' },
+// Batwing door panels — doors sit LOW near the ground, large open space ABOVE
+const DOOR_PANEL_H   = 95;   // panel height
+const DOOR_PANEL_TOP = DOOR_BOT - DOOR_PANEL_H;  // panels start near bottom of opening
+// This gives ~70px open space above the panels (DOOR_PANEL_TOP - DOOR_TOP ≈ 70)
+
+// Bottle shelf
+const BOTTLE_SHELF_Y = BAR_Y - 46;
+const BOTTLE_POSITIONS = [20, 55, 90, 140, 260, 300, 350, 395, 440];
+const BOTTLE_COLORS = ['#2E7B44', '#8B1A1A', '#DAA520', '#1A3A7A', '#6B3A6B'];
+
+// Windows
+const WINDOWS = [
+  { id: 'wl', x: 62,      y: 210, w: 54, h: 68 },
+  { id: 'wr', x: W - 62,  y: 210, w: 54, h: 68 },
 ];
 
-// Enemy outfit colour variants
+// Enemy spawn slots
+const SPAWN_SLOTS = [
+  { id: 'cover_bl', x: 120, peekY: 405, type: 'cover', coverType: 'table', minWave: 1 },
+  { id: 'cover_tl', x: 215, peekY: 402, type: 'cover', coverType: 'table', minWave: 1 },
+  { id: 'cover_tr', x: 310, peekY: 402, type: 'cover', coverType: 'table', minWave: 1 },
+  { id: 'cover_br', x: 415, peekY: 405, type: 'cover', coverType: 'table', minWave: 1 },
+  { id: 'win_l', x: 62,      peekY: 195, type: 'window', winIdx: 0, minWave: 3 },
+  { id: 'win_r', x: W - 62,  peekY: 195, type: 'window', winIdx: 1, minWave: 3 },
+  { id: 'bal_l', x: 120, peekY: 68, type: 'balcony', minWave: 6 },
+  { id: 'bal_c', x: 240, peekY: 68, type: 'balcony', minWave: 6 },
+  { id: 'bal_r', x: 360, peekY: 68, type: 'balcony', minWave: 6 },
+];
+
+// Cover furniture — round tables
+const COVERS = [
+  { x: 120, y: 430, w: 78, h: 55, type: 'table' },
+  { x: 215, y: 425, w: 80, h: 55, type: 'table' },
+  { x: 310, y: 425, w: 80, h: 55, type: 'table' },
+  { x: 415, y: 430, w: 78, h: 55, type: 'table' },
+];
+
+// Extra decorative round tables (non-cover, just ambiance)
+const DECO_TABLES = [
+  { x: 370, y: 465, w: 60, h: 42 },
+];
+
 const OUTFITS = [
-  { shirt: '#4A3728', pants: '#3A2318', hat: '#2C1810', band: '#8B0000' },
-  { shirt: '#1E3A1E', pants: '#132213', hat: '#0E1A0E', band: '#DAA520' },
-  { shirt: '#3D1A1A', pants: '#2B1010', hat: '#1C0A0A', band: '#4169E1' },
+  { shirt: '#4A3728', pants: '#3A2318', hat: '#2C1810', band: '#8B0000', bandana: '#8B0000', scar: false },
+  { shirt: '#1E3A1E', pants: '#132213', hat: '#0E1A0E', band: '#DAA520', bandana: null,      scar: true },
+  { shirt: '#3D1A1A', pants: '#2B1010', hat: '#1C0A0A', band: '#4169E1', bandana: '#4A2020', scar: false },
+  { shirt: '#4A4028', pants: '#3A3018', hat: '#2C2010', band: '#FF6347', bandana: null,      scar: true },
+  { shirt: '#2A2A3A', pants: '#1A1A28', hat: '#101018', band: '#C0C0C0', bandana: '#2A2A3A', scar: false },
 ];
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
-function rand(min, max) { return min + Math.random() * (max - min); }
+function rand(a, b) { return a + Math.random() * (b - a); }
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+function lerp(a, b, t) { return a + (b - a) * t; }
 function inRect(px, py, rx, ry, rw, rh) {
   return px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
 }
-function drawRoundRect(ctx, x, y, w, h, r) {
+function drawRR(ctx, x, y, w, h, r) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.arcTo(x + w, y, x + w, y + r, r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-  ctx.lineTo(x + r, y + h);
-  ctx.arcTo(x, y + h, x, y + h - r, r);
-  ctx.lineTo(x, y + r);
-  ctx.arcTo(x, y, x + r, y, r);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
 }
-function drawButton(ctx, cx, cy, bw, bh, text) {
-  const x = cx - bw / 2, y = cy - bh / 2;
-  ctx.fillStyle = '#6B2A00';
-  drawRoundRect(ctx, x + 2, y + 4, bw, bh, 10);
-  ctx.fill();
-  ctx.fillStyle = '#A04010';
-  drawRoundRect(ctx, x, y, bw, bh, 10);
-  ctx.fill();
-  ctx.strokeStyle = '#FFD700';
-  ctx.lineWidth = 2;
-  drawRoundRect(ctx, x, y, bw, bh, 10);
-  ctx.stroke();
-  ctx.fillStyle = '#FFD700';
-  ctx.font = 'bold 22px Georgia, serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, cx, cy + 1);
-  ctx.textBaseline = 'alphabetic';
+function enemyHB(e) {
+  if (e.posType === 'window')  return { x: e.drawX - 22, y: e.drawY - 40, w: 44, h: 56 };
+  if (e.posType === 'balcony') return { x: e.drawX - 22, y: e.drawY - 36, w: 44, h: 52 };
+  return { x: e.drawX - 26, y: e.drawY - 56, w: 52, h: 82 };
+}
+function civHB(c) {
+  if (c.type === 'doorCiv' && c.spawnMode === 'window')  return { x: c.x - 18, y: c.y - 36, w: 36, h: 50 };
+  if (c.type === 'doorCiv' && c.spawnMode === 'balcony') return { x: c.x - 18, y: c.y - 32, w: 36, h: 46 };
+  return { x: c.x - 20, y: c.y - 44, w: 40, h: 58 };
 }
 
-// Return the tappable hitbox for a visible enemy
-function enemyHitbox(e) {
-  return { x: e.drawX - 30, y: e.drawY - 68, w: 60, h: 95 };
+// ─── AUDIO MANAGER (Web Audio API — synthesised) ────────────────────────────
+class AudioManager {
+  constructor() {
+    this.ctx = null;
+    this.initialized = false;
+    this.musicPlaying = false;
+    this.musicGain = null;
+    this.musicTimer = null;
+  }
+
+  init() {
+    if (this.initialized) return;
+    try {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this.initialized = true;
+    } catch (_) {}
+  }
+
+  resume() {
+    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+  }
+
+  playNote(freq, startTime, duration, volume, type) {
+    if (!this.initialized) return;
+    const ctx = this.ctx;
+    const osc = ctx.createOscillator();
+    osc.type = type || 'triangle';
+    osc.frequency.setValueAtTime(freq, startTime);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.001, startTime);
+    g.gain.linearRampToValueAtTime(volume, startTime + 0.008);
+    g.gain.setValueAtTime(volume * 0.7, startTime + duration * 0.35);
+    g.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+    const dest = this.musicGain || ctx.destination;
+    osc.connect(g); g.connect(dest);
+    osc.start(startTime); osc.stop(startTime + duration + 0.02);
+  }
+
+  startMusic() {
+    if (!this.initialized || this.musicPlaying) return;
+    this.musicPlaying = true;
+    this.musicGain = this.ctx.createGain();
+    this.musicGain.gain.value = 0.22;
+    this.musicGain.connect(this.ctx.destination);
+    this._scheduleLoop();
+  }
+
+  stopMusic() {
+    this.musicPlaying = false;
+    if (this.musicTimer) { clearTimeout(this.musicTimer); this.musicTimer = null; }
+    if (this.musicGain) {
+      try { this.musicGain.gain.linearRampToValueAtTime(0.001, this.ctx.currentTime + 0.4); } catch (_) {}
+    }
+  }
+
+  _scheduleLoop() {
+    if (!this.musicPlaying || !this.initialized) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime + 0.1;
+    const bpm = 138;
+    const bt = 60 / bpm;
+    const bar = bt * 4;
+    const n = {
+      C3:130.81, D3:146.83, E3:164.81, F3:174.61, G3:196.00, A3:220.00, B3:246.94,
+      C4:261.63, D4:293.66, E4:329.63, F4:349.23, G4:392.00, A4:440.00, B4:493.88,
+      C5:523.25, D5:587.33, E5:659.25, G5:783.99,
+    };
+    const notes = [
+      [n.C3,0,bt*.7,.14,'triangle'],[n.E4,bt*.5,bt*.28,.07,'triangle'],
+      [n.G3,bt,bt*.28,.09,'triangle'],[n.E4,bt*1.5,bt*.28,.07,'triangle'],
+      [n.C3,bt*2,bt*.7,.14,'triangle'],[n.G4,bt*2.5,bt*.28,.07,'triangle'],
+      [n.G3,bt*3,bt*.28,.09,'triangle'],[n.E4,bt*3.5,bt*.28,.07,'triangle'],
+      [n.C3,bar,bt*.7,.14,'triangle'],[n.C4,bar+bt*.5,bt*.28,.07,'triangle'],
+      [n.G3,bar+bt,bt*.28,.09,'triangle'],[n.D4,bar+bt*1.5,bt*.28,.07,'triangle'],
+      [n.C3,bar+bt*2,bt*.7,.14,'triangle'],[n.E4,bar+bt*2.5,bt*.28,.07,'triangle'],
+      [n.G3,bar+bt*3,bt*.28,.09,'triangle'],[n.G4,bar+bt*3.5,bt*.3,.07,'triangle'],
+      [n.F3,bar*2,bt*.7,.14,'triangle'],[n.A4,bar*2+bt*.5,bt*.28,.07,'triangle'],
+      [n.A3,bar*2+bt,bt*.28,.09,'triangle'],[n.F4,bar*2+bt*1.5,bt*.28,.07,'triangle'],
+      [n.F3,bar*2+bt*2,bt*.7,.14,'triangle'],[n.A4,bar*2+bt*2.5,bt*.28,.07,'triangle'],
+      [n.A3,bar*2+bt*3,bt*.28,.09,'triangle'],[n.F4,bar*2+bt*3.5,bt*.28,.07,'triangle'],
+      [n.G3,bar*3,bt*.7,.14,'triangle'],[n.B4,bar*3+bt*.5,bt*.28,.07,'triangle'],
+      [n.D3,bar*3+bt,bt*.28,.09,'triangle'],[n.D4,bar*3+bt*1.5,bt*.28,.07,'triangle'],
+      [n.G3,bar*3+bt*2,bt*.7,.14,'triangle'],[n.F4,bar*3+bt*2.5,bt*.28,.07,'triangle'],
+      [n.D3,bar*3+bt*3,bt*.28,.09,'triangle'],[n.B3,bar*3+bt*3.5,bt*.28,.07,'triangle'],
+      [n.C3,bar*4,bt*.7,.14,'triangle'],[n.G4,bar*4+bt*.5,bt*.28,.07,'triangle'],
+      [n.G3,bar*4+bt,bt*.28,.09,'triangle'],[n.E5,bar*4+bt*1.5,bt*.28,.06,'triangle'],
+      [n.C3,bar*4+bt*2,bt*.7,.14,'triangle'],[n.C5,bar*4+bt*2.5,bt*.28,.06,'triangle'],
+      [n.G3,bar*4+bt*3,bt*.28,.09,'triangle'],[n.G4,bar*4+bt*3.5,bt*.28,.07,'triangle'],
+      [n.A3,bar*5,bt*.7,.13,'triangle'],[n.E4,bar*5+bt*.5,bt*.28,.07,'triangle'],
+      [n.E3,bar*5+bt,bt*.28,.09,'triangle'],[n.A4,bar*5+bt*1.5,bt*.28,.07,'triangle'],
+      [n.A3,bar*5+bt*2,bt*.7,.13,'triangle'],[n.E4,bar*5+bt*2.5,bt*.28,.07,'triangle'],
+      [n.E3,bar*5+bt*3,bt*.28,.09,'triangle'],[n.C4,bar*5+bt*3.5,bt*.28,.07,'triangle'],
+      [n.G3,bar*6,bt*.7,.14,'triangle'],[n.B4,bar*6+bt*.5,bt*.28,.07,'triangle'],
+      [n.D3,bar*6+bt,bt*.28,.09,'triangle'],[n.D5,bar*6+bt*1.5,bt*.28,.06,'triangle'],
+      [n.G3,bar*6+bt*2,bt*.7,.14,'triangle'],[n.F4,bar*6+bt*2.5,bt*.28,.07,'triangle'],
+      [n.D3,bar*6+bt*3,bt*.28,.09,'triangle'],[n.B3,bar*6+bt*3.5,bt*.28,.07,'triangle'],
+      [n.C3,bar*7,bt*.7,.14,'triangle'],[n.E4,bar*7+bt*.5,bt*.28,.07,'triangle'],
+      [n.G3,bar*7+bt,bt*.28,.09,'triangle'],[n.C4,bar*7+bt*1.5,bt*.28,.07,'triangle'],
+      [n.C3,bar*7+bt*2,bt*1.4,.14,'triangle'],[n.E4,bar*7+bt*2,bt*.5,.06,'triangle'],
+      [n.G4,bar*7+bt*2,bt*.5,.05,'triangle'],
+    ];
+    for (const p of notes) this.playNote(p[0], now + p[1], p[2], p[3], p[4]);
+    const loopLen = bar * 8;
+    this.musicTimer = setTimeout(() => this._scheduleLoop(), (loopLen - 0.3) * 1000);
+  }
+
+  playGunshot() {
+    if (!this.initialized) return;
+    const ctx = this.ctx, now = ctx.currentTime;
+    const bufSz = Math.floor(ctx.sampleRate * 0.28);
+    const buf = ctx.createBuffer(1, bufSz, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < bufSz; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufSz, 3.5);
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const flt = ctx.createBiquadFilter(); flt.type = 'lowpass';
+    flt.frequency.setValueAtTime(4500, now);
+    flt.frequency.exponentialRampToValueAtTime(250, now + 0.18);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.45, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+    src.connect(flt); flt.connect(g); g.connect(ctx.destination);
+    src.start(now); src.stop(now + 0.28);
+    const thud = ctx.createOscillator(); thud.type = 'sine';
+    thud.frequency.setValueAtTime(140, now);
+    thud.frequency.exponentialRampToValueAtTime(45, now + 0.09);
+    const tg = ctx.createGain();
+    tg.gain.setValueAtTime(0.25, now);
+    tg.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    thud.connect(tg); tg.connect(ctx.destination);
+    thud.start(now); thud.stop(now + 0.13);
+  }
+
+  playEnemyShot() {
+    if (!this.initialized) return;
+    const ctx = this.ctx, now = ctx.currentTime;
+    const bufSz = Math.floor(ctx.sampleRate * 0.2);
+    const buf = ctx.createBuffer(1, bufSz, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < bufSz; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufSz, 4);
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const flt = ctx.createBiquadFilter(); flt.type = 'lowpass';
+    flt.frequency.setValueAtTime(3000, now);
+    flt.frequency.exponentialRampToValueAtTime(200, now + 0.12);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.3, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+    src.connect(flt); flt.connect(g); g.connect(ctx.destination);
+    src.start(now); src.stop(now + 0.2);
+  }
+
+  playDoorCreak() {
+    if (!this.initialized) return;
+    const ctx = this.ctx, now = ctx.currentTime;
+    const osc = ctx.createOscillator(); osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(55, now);
+    osc.frequency.linearRampToValueAtTime(170, now + 0.12);
+    osc.frequency.linearRampToValueAtTime(45, now + 0.32);
+    const flt = ctx.createBiquadFilter(); flt.type = 'bandpass';
+    flt.frequency.setValueAtTime(380, now); flt.Q.value = 7;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.1, now);
+    g.gain.linearRampToValueAtTime(0.05, now + 0.1);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.36);
+    osc.connect(flt); flt.connect(g); g.connect(ctx.destination);
+    osc.start(now); osc.stop(now + 0.38);
+  }
+
+  playGlassShatter() {
+    if (!this.initialized) return;
+    const ctx = this.ctx, now = ctx.currentTime;
+    // High-freq noise burst simulating glass
+    const bufSz = Math.floor(ctx.sampleRate * 0.35);
+    const buf = ctx.createBuffer(1, bufSz, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < bufSz; i++) {
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufSz, 2.5) *
+             (1 + 0.5 * Math.sin(i * 0.08));
+    }
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const flt = ctx.createBiquadFilter(); flt.type = 'highpass';
+    flt.frequency.setValueAtTime(3000, now);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.2, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+    src.connect(flt); flt.connect(g); g.connect(ctx.destination);
+    src.start(now); src.stop(now + 0.35);
+    // Tinkling overtone
+    const osc = ctx.createOscillator(); osc.type = 'sine';
+    osc.frequency.setValueAtTime(4200, now);
+    osc.frequency.exponentialRampToValueAtTime(1200, now + 0.2);
+    const g2 = ctx.createGain();
+    g2.gain.setValueAtTime(0.08, now);
+    g2.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    osc.connect(g2); g2.connect(ctx.destination);
+    osc.start(now); osc.stop(now + 0.26);
+  }
 }
 
-// ─── GAME CLASS ───────────────────────────────────────────────────────────────
+// ─── DOOR PHYSICS ───────────────────────────────────────────────────────────
+class DoorPhysics {
+  constructor() {
+    this.angleL = 0; this.angleR = 0;
+    this.velL = 0; this.velR = 0;
+    this.stiffness = 14; this.damping = 4.5;
+  }
+  push(force) { this.velL += force; this.velR += force; }
+  update(dt) {
+    const accL = -this.stiffness * this.angleL - this.damping * this.velL;
+    const accR = -this.stiffness * this.angleR - this.damping * this.velR;
+    this.velL += accL * dt; this.velR += accR * dt;
+    this.angleL += this.velL * dt; this.angleR += this.velR * dt;
+    this.angleL = clamp(this.angleL, -0.1, 1.2);
+    this.angleR = clamp(this.angleR, -0.1, 1.2);
+  }
+}
+
+// ─── GAME ─────────────────────────────────────────────────────────────────────
 class WesternShooter {
   constructor() {
     this.canvas = document.getElementById('gameCanvas');
@@ -99,47 +339,46 @@ class WesternShooter {
     this.scale  = 1;
     this.ox = 0; this.oy = 0;
 
-    // Game state
-    this.state    = 'intro'; // 'intro' | 'playing' | 'gameover'
+    this.state    = 'intro';
     this.score    = 0;
-    // Restore best score from Local Storage so it survives app restarts on Android
     this.bestScore = parseInt(localStorage.getItem('westernShooterBest') || '0', 10);
     this.lives    = MAX_LIVES;
     this.bullets  = MAX_BULLETS;
-    this.reloading    = false;
-    this.reloadTimer  = 0;
-    this.wave          = 1;
-    this.waveSpawned   = 0;
-    this.waveKills     = 0;
-    this.waveEnemies   = 5;
-    this.spawnTimer    = 2;
-    this.spawnInterval = 3;
+    this.reloading = false;
+    this.reloadTimer = 0;
+    this.wave = 1;
+    this.waveSpawned = 0;
+    this.waveKills = 0;
+    this.waveEnemies = 4;
+    this.spawnTimer = 2;
+    this.spawnInterval = 3.5;
 
-    // Entities / FX
     this.enemies   = [];
+    this.civilians = [];
     this.particles = [];
+    this.alerts    = [];
 
-    // Misc
-    this.doorSwing   = 0;  // 0→1 drive for swing animation
-    this.hitFlash    = 0;  // player-hit screen red
-    this.waveBanner  = 0;  // countdown for "WAVE N" splash
-    this.lastT       = 0;
-    this.time        = 0;  // total elapsed seconds — frame-rate-independent animations
+    // Bottles (interactive)
+    this.bottles = [];
+    this._initBottles();
 
-    // Aim tracking & OTS gun
-    this.aimX    = W * 0.4;
-    this.aimY    = H * 0.3;
+    this.aimX = 0.5; this.aimY = 0.4;
+    this.smoothAimX = 0.5; this.smoothAimY = 0.4;
     this.recoilT = 0;
-    this.muzzleX = W / 2;
-    this.muzzleY = H - 140;
+    this.crossX = W / 2; this.crossY = H * 0.4;
 
-    // Atmospheric dust motes
-    this.dustMotes = Array.from({ length: 20 }, () => ({
-      x: rand(0, W), y: rand(20, H * 0.8),
-      r: rand(0.8, 2.0),
-      speed: rand(0.3, 0.8),
-      drift: rand(-0.4, 0.4),
-      alpha: rand(0.04, 0.13),
+    this.door = new DoorPhysics();
+    this.audio = new AudioManager();
+    this.civSpawnTimer = 0;
+    this.nextCivDelay = 14;
+
+    this.hitFlash = 0; this.civFlash = 0;
+    this.waveBanner = 0; this.lastT = 0; this.time = 0;
+
+    this.dust = Array.from({ length: 22 }, () => ({
+      x: rand(0, W), y: rand(20, H * 0.7),
+      r: rand(0.8, 2), vy: rand(0.3, 0.8), vx: rand(-0.4, 0.4),
+      a: rand(0.04, 0.12),
     }));
 
     this.resize();
@@ -148,238 +387,346 @@ class WesternShooter {
     requestAnimationFrame(t => this.loop(t));
   }
 
-  // ── Sizing ────────────────────────────────────────────────────────────────
+  _initBottles() {
+    this.bottles = BOTTLE_POSITIONS.map((bx, i) => ({
+      x: bx, y: BOTTLE_SHELF_Y, alive: true,
+      color: BOTTLE_COLORS[i % BOTTLE_COLORS.length],
+    }));
+  }
+
   resize() {
     const cw = window.innerWidth, ch = window.innerHeight;
     this.scale = Math.min(cw / W, ch / H);
     this.ox = (cw - W * this.scale) / 2;
     this.oy = (ch - H * this.scale) / 2;
-    this.canvas.width  = cw;
-    this.canvas.height = ch;
+    this.canvas.width = cw; this.canvas.height = ch;
   }
   toGame(cx, cy) {
     return { x: (cx - this.ox) / this.scale, y: (cy - this.oy) / this.scale };
   }
 
-  // ── Input ─────────────────────────────────────────────────────────────────
   setupInput() {
-    const handle = (cx, cy, isTap) => {
+    const handle = (cx, cy, tap) => {
       const p = this.toGame(cx, cy);
-      this.aimX = p.x;
-      this.aimY = p.y;
-      if (isTap) this.onTap(p.x, p.y);
+      this.aimX = clamp(p.x / W, 0, 1);
+      this.aimY = clamp(p.y / H, 0, 1);
+      this.crossX = p.x; this.crossY = p.y;
+      if (tap) this.onTap(p.x, p.y);
     };
-
-    // Touch events — use the first changed touch for single-tap gameplay.
-    // passive: false is required so we can call e.preventDefault() and stop
-    // the WebView from triggering scroll / zoom behaviours during gameplay.
     this.canvas.addEventListener('touchstart', e => {
       e.preventDefault();
+      this.audio.init(); this.audio.resume();
       handle(e.changedTouches[0].clientX, e.changedTouches[0].clientY, true);
     }, { passive: false });
-    // Track aim on touchmove AND prevent WebView scroll/zoom gestures
     this.canvas.addEventListener('touchmove', e => {
       e.preventDefault();
       handle(e.changedTouches[0].clientX, e.changedTouches[0].clientY, false);
     }, { passive: false });
-
-    // Prevent touchend from triggering WebView gestures
-    this.canvas.addEventListener('touchend', e => {
-      e.preventDefault();
-    }, { passive: false });
-
-    // Mouse events for desktop browsers / Android emulator
-    this.canvas.addEventListener('mousedown', e => handle(e.clientX, e.clientY, true));
+    this.canvas.addEventListener('touchend', e => e.preventDefault(), { passive: false });
+    this.canvas.addEventListener('mousedown', e => {
+      this.audio.init(); this.audio.resume();
+      handle(e.clientX, e.clientY, true);
+    });
     this.canvas.addEventListener('mousemove', e => handle(e.clientX, e.clientY, false));
   }
 
   onTap(x, y) {
     if (this.state === 'intro') {
-      if (inRect(x, y, W / 2 - 125, H / 2 + 90, 250, 56)) this.startGame();
+      if (inRect(x, y, W / 2 - 120, H / 2 + 80, 240, 54)) this.startGame();
       return;
     }
     if (this.state === 'gameover') {
-      if (inRect(x, y, W / 2 - 110, H * 0.67, 220, 56)) this.startGame();
+      if (inRect(x, y, W / 2 - 100, H * 0.68, 200, 54)) this.startGame();
+      return;
+    }
+    if (this.state === 'paused') {
+      if (inRect(x, y, W / 2 - 90, H / 2 + 15, 180, 50)) { this.state = 'playing'; this.audio.startMusic(); }
       return;
     }
     if (this.state !== 'playing') return;
-
-    // RELOAD button (bottom-right)
-    if (inRect(x, y, W - 118, H - 70, 108, 34)) {
-      this.triggerReload();
-      return;
-    }
-    // Shoot (or reload if empty)
-    if (this.reloading || this.bullets <= 0) {
-      this.triggerReload();
-    } else {
-      this.fireAt(x, y);
-    }
+    if (inRect(x, y, W - 44, 6, 38, 30)) { this.state = 'paused'; this.audio.stopMusic(); return; }
+    if (y > H - 100 && x < 110) { this.triggerReload(); return; }
+    if (this.reloading || this.bullets <= 0) { this.triggerReload(); return; }
+    this.fireAt(x, y);
   }
 
-  // ── Game lifecycle ────────────────────────────────────────────────────────
   startGame() {
-    this.state         = 'playing';
-    this.score         = 0;
-    this.lives         = MAX_LIVES;
-    this.bullets       = MAX_BULLETS;
-    this.reloading     = false;
-    this.reloadTimer   = 0;
-    this.wave          = 1;
-    this.waveSpawned   = 0;
-    this.waveKills     = 0;
-    this.waveEnemies   = 5;
-    this.spawnTimer    = 2;
-    this.spawnInterval = 3;
-    this.enemies       = [];
-    this.particles     = [];
-    this.doorSwing     = 0;
-    this.hitFlash      = 0;
-    this.waveBanner    = 0;
-    this.recoilT       = 0;
+    this.state = 'playing';
+    this.score = 0; this.lives = MAX_LIVES; this.bullets = MAX_BULLETS;
+    this.reloading = false; this.reloadTimer = 0;
+    this.wave = 1; this.waveSpawned = 0; this.waveKills = 0;
+    this.waveEnemies = 4; this.spawnTimer = 2; this.spawnInterval = 3.5;
+    this.enemies = []; this.particles = []; this.alerts = [];
+    this.hitFlash = 0; this.civFlash = 0; this.waveBanner = 0; this.recoilT = 0;
+    this.door = new DoorPhysics();
+    this._initBottles();
+    this.civSpawnTimer = 0;
+    this.nextCivDelay = 14;
+    this.initCivilians();
+    this.audio.init(); this.audio.resume(); this.audio.startMusic();
+  }
+
+  initCivilians() {
+    this.civilians = [
+      { type: 'pianist',   x: 42,  y: 430, alive: true, scared: 0, hitTimer: 0 },
+      { type: 'bartender', x: 360, y: 350, alive: true, scared: 0, hitTimer: 0 },
+      { type: 'patron',    x: 215, y: 440, alive: true, scared: 0, hitTimer: 0 },
+      { type: 'poker1',    x: 108, y: 460, alive: true, scared: 0, hitTimer: 0 },
+      { type: 'poker2',    x: 132, y: 460, alive: true, scared: 0, hitTimer: 0 },
+      { type: 'drinker',   x: 435, y: 358, alive: true, scared: 0, hitTimer: 0 },
+    ];
   }
 
   triggerReload() {
     if (this.reloading || this.bullets === MAX_BULLETS) return;
-    this.reloading   = true;
-    this.reloadTimer = RELOAD_TIME;
+    this.reloading = true; this.reloadTimer = RELOAD_TIME;
   }
 
   fireAt(x, y) {
     this.bullets--;
-    this.recoilT = RECOIL_DURATION;
-    // Muzzle-flash particle at calculated barrel tip
-    this.particles.push({ type: 'flash', x: this.muzzleX, y: this.muzzleY, t: 0.14 });
+    this.recoilT = RECOIL_DUR;
+    this.audio.playGunshot();
+
+    const gunTipX = W / 2 + (this.smoothAimX - 0.5) * GUN_PAN_X;
+    const gunTipY = H - 170 + (this.smoothAimY - 0.5) * GUN_PAN_Y;
+    this.particles.push({ type: 'flash', x: gunTipX, y: gunTipY, t: 0.13 });
+
+    for (const c of this.civilians) { if (c.alive && c.hitTimer <= 0) c.scared = 1.5; }
 
     let hit = false;
+
+    // Check enemies
     for (const e of this.enemies) {
       if (!e.visible) continue;
-      const hb = enemyHitbox(e);
-      if (inRect(x, y, hb.x, hb.y, hb.w, hb.h)) {
-        this.damageEnemy(e);
-        hit = true;
-        break;
+      const hb = enemyHB(e);
+      if (inRect(x, y, hb.x, hb.y, hb.w, hb.h)) { this.damageEnemy(e); hit = true; break; }
+    }
+
+    // Check civilians
+    if (!hit) {
+      for (const c of this.civilians) {
+        if (!c.alive || c.hitTimer > 0) continue;
+        const hb = civHB(c);
+        if (inRect(x, y, hb.x, hb.y, hb.w, hb.h)) { this.hitCivilian(c); hit = true; break; }
       }
     }
+
+    // Check bottles
     if (!hit) {
-      // Bullet-hole decal at tap position
-      this.particles.push({ type: 'hole', x, y, t: 7 });
+      for (const b of this.bottles) {
+        if (!b.alive) continue;
+        if (inRect(x, y, b.x - 2, b.y - 7, 14, 27)) {
+          b.alive = false;
+          this.audio.playGlassShatter();
+          // Glass debris particles
+          for (let i = 0; i < 8; i++) {
+            this.particles.push({
+              type: 'glass', x: b.x + 5, y: b.y + 8,
+              vx: rand(-3, 3), vy: rand(-4, -1), t: rand(0.4, 0.8),
+              color: b.color,
+            });
+          }
+          this.alerts.push({ text: '+10', x: b.x + 5, y: b.y - 10, t: 0.8, color: '#88CCFF' });
+          this.score += 10;
+          hit = true;
+          break;
+        }
+      }
     }
-    if (this.bullets === 0) {
-      setTimeout(() => this.triggerReload(), 350);
-    }
+
+    if (!hit) this.particles.push({ type: 'hole', x, y, t: 6 });
+    if (this.bullets === 0) setTimeout(() => this.triggerReload(), 350);
+  }
+
+  hitCivilian(c) {
+    c.hitTimer = 2.5; c.scared = 2.5;
+    this.score = Math.max(0, this.score - CIV_PENALTY);
+    this.lives = Math.max(0, this.lives - 1);
+    this.civFlash = 0.6;
+    this.alerts.push({ text: `INNOCENT! -${CIV_PENALTY}`, x: c.x, y: c.y - 55, t: 2, color: '#FF4444' });
+    if (this.lives === 0) this.endGame();
   }
 
   damageEnemy(e) {
     e.hp--;
-    const hb = enemyHitbox(e);
+    const hb = enemyHB(e);
     const cx = hb.x + hb.w / 2, cy = hb.y + hb.h / 2;
-    for (let i = 0; i < 7; i++) {
-      this.particles.push({
-        type: 'blood', x: cx, y: cy,
-        vx: rand(-2.5, 2.5), vy: rand(-3.5, -0.5),
-        t: rand(0.35, 0.7),
-      });
+    for (let i = 0; i < 6; i++) {
+      this.particles.push({ type: 'blood', x: cx, y: cy, vx: rand(-2.5, 2.5), vy: rand(-3, -0.5), t: rand(0.3, 0.65) });
     }
-    this.particles.push({ type: 'hit', x: cx, y: cy, t: 0.22 });
-
+    this.particles.push({ type: 'hit', x: cx, y: cy, t: 0.2 });
     if (e.hp <= 0) {
-      e.state   = 'dead';
-      e.visible = true;
-      e.deadT   = 0.75;
-      this.score += 100 * this.wave;
+      e.state = 'dead'; e.visible = true; e.deadT = 0.7;
+      const pts = 100 * this.wave;
+      this.score += pts;
+      this.alerts.push({ text: `+${pts}`, x: cx, y: cy - 28, t: 1, color: '#FFD700' });
       this.waveKills++;
-      if (this.waveKills >= this.waveEnemies) {
-        setTimeout(() => this.advanceWave(), 2000);
-      }
+      if (this.waveKills >= this.waveEnemies) setTimeout(() => this.advanceWave(), 2000);
     } else {
-      // Enemy retreats then comes back later
-      e.state     = 'retreating';
-      e.retreatT  = 0.45;
-      setTimeout(() => {
-        if (e.state !== 'dead') {
-          e.state   = 'hiding';
-          e.hideT   = rand(1, 2.5);
-          e.visible = false;
-        }
-      }, 460);
+      e.state = 'retreating'; e.retreatT = 0.45;
+      setTimeout(() => { if (e.state !== 'dead') { e.state = 'hiding'; e.hideT = rand(1, 2.5); e.visible = false; } }, 460);
     }
   }
 
   enemyShoot(e) {
     if (e.state === 'dead') return;
-    e.state  = 'shooting';
-    e.shootT = 0.4;
-    // Enemy muzzle-flash
-    this.particles.push({ type: 'eflash', x: e.drawX - 24, y: e.drawY + 8, t: 0.14 });
-    setTimeout(() => { if (e.state !== 'dead') this.takeDamage(); }, 260);
-    setTimeout(() => {
-      if (e.state !== 'dead') {
-        e.state   = 'hiding';
-        e.hideT   = rand(0.9, 2);
-        e.visible = false;
-      }
-    }, 720);
+    e.state = 'shooting'; e.shootT = 0.4;
+    this.audio.playEnemyShot();
+    this.particles.push({ type: 'eflash', x: e.drawX - 18, y: e.drawY + 6, t: 0.13 });
+    setTimeout(() => { if (e.state !== 'dead') this.takeDamage(); }, 250);
+    setTimeout(() => { if (e.state !== 'dead') { e.state = 'hiding'; e.hideT = rand(0.8, 2); e.visible = false; } }, 700);
   }
 
   takeDamage() {
     if (this.state !== 'playing') return;
-    this.lives    = Math.max(0, this.lives - 1);
+    this.lives = Math.max(0, this.lives - 1);
     this.hitFlash = 0.55;
-    if (this.lives === 0) {
-      this.bestScore = Math.max(this.bestScore, this.score);
-      // Persist the best score so it survives app restarts on Android
-      try { localStorage.setItem('westernShooterBest', String(this.bestScore)); } catch (e) { console.warn('Could not save best score:', e); }
-      setTimeout(() => { this.state = 'gameover'; }, 550);
-    }
+    if (this.lives === 0) this.endGame();
+  }
+
+  endGame() {
+    this.bestScore = Math.max(this.bestScore, this.score);
+    try { localStorage.setItem('westernShooterBest', String(this.bestScore)); } catch (_) {}
+    this.audio.stopMusic();
+    setTimeout(() => { this.state = 'gameover'; }, 500);
   }
 
   advanceWave() {
     if (this.state !== 'playing') return;
     this.wave++;
-    this.waveSpawned   = 0;
-    this.waveKills     = 0;
-    this.waveEnemies   = 5 + this.wave * 2;
-    this.spawnInterval = Math.max(1.1, 3 - this.wave * 0.22);
-    this.spawnTimer    = 1.8;
-    this.waveBanner    = 2.6;
-    this.enemies       = [];
+    this.waveSpawned = 0; this.waveKills = 0;
+    this.waveEnemies = 4 + this.wave;
+    this.spawnInterval = Math.max(1.6, 3.5 - this.wave * 0.18);
+    this.spawnTimer = 1.8; this.waveBanner = 2.5;
+    this.enemies = [];
+    this.civilians = this.civilians.filter(c => c.type !== 'doorCiv');
+    for (const c of this.civilians) { c.scared = 0; c.hitTimer = 0; }
+    // Reset bottles each wave
+    this._initBottles();
   }
 
   spawnEnemy() {
-    const usedIds = new Set(
-      this.enemies.filter(e => e.state !== 'dead').map(e => e.coverId)
-    );
-    const free = COVERS.filter(c => !usedIds.has(c.id));
-    if (!free.length) return;
-    const cover = free[Math.floor(Math.random() * free.length)];
+    const used = new Set(this.enemies.filter(e => e.state !== 'dead').map(e => e.slotId));
+    const avail = SPAWN_SLOTS.filter(s => s.minWave <= this.wave && !used.has(s.id));
+    if (!avail.length) return;
+    const slot = avail[Math.floor(Math.random() * avail.length)];
+    const isGround = slot.type === 'cover';
+    if (isGround) { this.door.push(8); this.audio.playDoorCreak(); }
 
-    // peekY = body-centre when fully peeked above the cover top
-    const coverTop = cover.y - cover.h / 2;
-    const peekY    = coverTop - 28;
+    let hp = 1;
+    if (this.wave >= 5 && this.wave < 9) hp = Math.random() < 0.45 ? 2 : 1;
+    else if (this.wave >= 9) { const r = Math.random(); hp = r < 0.2 ? 3 : r < 0.7 ? 2 : 1; }
 
     this.enemies.push({
-      coverId:   cover.id,
-      cover,
-      hp: this.wave >= 3 ? 2 : 1,
-      maxHp: this.wave >= 3 ? 2 : 1,
+      slotId: slot.id, slot, posType: slot.type,
+      hp, maxHp: hp,
       outfit: Math.floor(Math.random() * OUTFITS.length),
-      state:     'entering',
-      visible:   true,
-      drawX:     DOOR_CX,  // starts at door
-      drawY:     peekY,
-      peekY,
-      walkFrame: 0,
-      walkT:     0,
-      // timers
-      hideT:    0, warnT: 0, peekT: 0,
+      state: isGround ? 'entering' : 'appearing',
+      visible: true,
+      drawX: isGround ? DOOR_CX : slot.x,
+      drawY: isGround ? DOOR_BOT - 30 : slot.peekY,
+      peekY: slot.peekY,
+      walkFrame: 0, walkT: 0, appearT: 0.6,
+      hideT: 0, warnT: 0, peekT: 0,
       retreatT: 0, deadT: 0, shootT: 0,
     });
     this.waveSpawned++;
-    this.doorSwing = 1;
   }
 
-  // ── Update ────────────────────────────────────────────────────────────────
+  // ── Roaming civilian helpers ────────────────────────────────────────────────
+  _spawnRoamingCiv() {
+    this.civSpawnTimer = this.nextCivDelay + rand(0, 5);
+    this.nextCivDelay = Math.max(6, this.nextCivDelay - 0.5);
+    const types = ['cowgirl', 'oldman', 'townsfolk'];
+    const subtype = types[Math.floor(Math.random() * types.length)];
+
+    // Determine spawn mode based on wave
+    let mode = 'door';
+    if (this.wave >= 7) {
+      const r = Math.random();
+      if (r < 0.25) mode = 'balcony';
+      else if (r < 0.50) mode = 'window';
+      else mode = 'door';
+    } else if (this.wave >= 4) {
+      mode = Math.random() < 0.35 ? 'window' : 'door';
+    }
+
+    if (mode === 'door') {
+      const goLeft = Math.random() < 0.5;
+      this.door.push(6); this.audio.playDoorCreak();
+      this.civilians.push({
+        type: 'doorCiv', subtype, spawnMode: 'door',
+        x: DOOR_CX, y: DOOR_BOT - 30,
+        targetX: goLeft ? rand(100, 190) : rand(320, 420),
+        targetY: 442,
+        alive: true, scared: 0, hitTimer: 0,
+        civState: 'entering', walkFrame: 0, walkT: 0, stayTimer: 0,
+      });
+    } else if (mode === 'window') {
+      const win = WINDOWS[Math.floor(Math.random() * WINDOWS.length)];
+      this.civilians.push({
+        type: 'doorCiv', subtype, spawnMode: 'window',
+        x: win.x, y: win.y + 5,
+        alive: true, scared: 0, hitTimer: 0,
+        civState: 'appearing', appearT: 0.5, stayTimer: rand(4, 8),
+        drawAlpha: 0,
+      });
+    } else {
+      const bx = [120, 240, 360][Math.floor(Math.random() * 3)];
+      this.civilians.push({
+        type: 'doorCiv', subtype, spawnMode: 'balcony',
+        x: bx, y: 78,
+        alive: true, scared: 0, hitTimer: 0,
+        civState: 'appearing', appearT: 0.5, stayTimer: rand(4, 8),
+        drawAlpha: 0,
+      });
+    }
+  }
+
+  _updateDoorCiv(c, dt) {
+    const spd = 70 * dt;
+    if (c.spawnMode === 'door') {
+      if (c.civState === 'entering') {
+        const dx = c.targetX - c.x, dy = (c.targetY || 442) - c.y;
+        if (Math.abs(dx) < spd && Math.abs(dy) < spd) {
+          c.x = c.targetX; c.y = c.targetY || 442;
+          c.civState = 'idle'; c.stayTimer = rand(6, 12);
+        } else {
+          c.x += Math.sign(dx) * Math.min(spd, Math.abs(dx));
+          c.y += Math.sign(dy) * Math.min(spd * 0.7, Math.abs(dy));
+          c.walkT = (c.walkT || 0) + dt; if (c.walkT > 0.18) { c.walkT = 0; c.walkFrame = (c.walkFrame || 0) ^ 1; }
+        }
+      } else if (c.civState === 'idle') {
+        c.stayTimer -= dt;
+        if (c.stayTimer <= 0) { c.civState = 'leaving'; c.targetX = DOOR_CX; c.targetY = DOOR_BOT - 30; }
+      } else if (c.civState === 'leaving') {
+        const dx = DOOR_CX - c.x, dy = (DOOR_BOT - 30) - c.y;
+        if (Math.abs(dx) < spd && Math.abs(dy) < spd) { c.alive = false; this.door.push(4); }
+        else {
+          c.x += Math.sign(dx) * Math.min(spd, Math.abs(dx));
+          c.y += Math.sign(dy) * Math.min(spd * 0.7, Math.abs(dy));
+          c.walkT = (c.walkT || 0) + dt; if (c.walkT > 0.18) { c.walkT = 0; c.walkFrame = (c.walkFrame || 0) ^ 1; }
+        }
+      }
+    } else {
+      // window / balcony civs: appear → idle → disappear
+      if (c.civState === 'appearing') {
+        c.appearT -= dt;
+        c.drawAlpha = clamp(1 - c.appearT / 0.5, 0, 1);
+        if (c.appearT <= 0) { c.civState = 'idle'; c.drawAlpha = 1; }
+      } else if (c.civState === 'idle') {
+        c.drawAlpha = 1;
+        c.stayTimer -= dt;
+        if (c.stayTimer <= 0) { c.civState = 'disappearing'; c.appearT = 0.4; }
+      } else if (c.civState === 'disappearing') {
+        c.appearT -= dt;
+        c.drawAlpha = clamp(c.appearT / 0.4, 0, 1);
+        if (c.appearT <= 0) c.alive = false;
+      }
+    }
+  }
+
+  // ─── UPDATE ─────────────────────────────────────────────────────────────────
   loop(t) {
     const dt = Math.min((t - this.lastT) / 1000, 0.05);
     this.lastT = t;
@@ -391,57 +738,45 @@ class WesternShooter {
   update(dt) {
     if (this.state !== 'playing') return;
     this.time += dt;
-
-    // Door-swing decay
-    if (this.doorSwing > 0) this.doorSwing = Math.max(0, this.doorSwing - dt * 1.5);
-
-    // Red hit overlay decay
+    this.smoothAimX = lerp(this.smoothAimX, this.aimX, Math.min(1, dt * GUN_AIM_LERP));
+    this.smoothAimY = lerp(this.smoothAimY, this.aimY, Math.min(1, dt * GUN_AIM_LERP));
+    this.door.update(dt);
     if (this.hitFlash > 0) this.hitFlash = Math.max(0, this.hitFlash - dt * 2.2);
-
-    // Wave-banner countdown
+    if (this.civFlash > 0) this.civFlash = Math.max(0, this.civFlash - dt * 2.0);
     if (this.waveBanner > 0) this.waveBanner -= dt;
-
-    // Reload
+    if (this.recoilT > 0) this.recoilT = Math.max(0, this.recoilT - dt);
     if (this.reloading) {
       this.reloadTimer -= dt;
-      if (this.reloadTimer <= 0) {
-        this.reloading   = false;
-        this.reloadTimer = 0;
-        this.bullets     = MAX_BULLETS;
+      if (this.reloadTimer <= 0) { this.reloading = false; this.reloadTimer = 0; this.bullets = MAX_BULLETS; }
+    }
+    for (const d of this.dust) {
+      d.x += d.vx * dt * 25; d.y -= d.vy * dt * 15;
+      if (d.y < -5) { d.y = H * 0.7 + rand(0, 40); d.x = rand(0, W); }
+      if (d.x < 0) d.x = W; if (d.x > W) d.x = 0;
+    }
+    for (const a of this.alerts) { a.t -= dt; a.y -= dt * 28; }
+    this.alerts = this.alerts.filter(a => a.t > 0);
+    for (const c of this.civilians) {
+      if (c.scared > 0) c.scared = Math.max(0, c.scared - dt);
+      if (c.hitTimer > 0) c.hitTimer = Math.max(0, c.hitTimer - dt);
+      if (c.type === 'doorCiv') this._updateDoorCiv(c, dt);
+    }
+    this.civilians = this.civilians.filter(c => c.alive || c.hitTimer > 0);
+    // Spawn roaming civilians starting wave 2
+    if (this.wave >= 2) {
+      this.civSpawnTimer -= dt;
+      if (this.civSpawnTimer <= 0) {
+        this._spawnRoamingCiv();
       }
     }
-
-    // Gun recoil decay
-    if (this.recoilT > 0) this.recoilT = Math.max(0, this.recoilT - dt);
-
-    // Animate floating dust motes
-    for (const d of this.dustMotes) {
-      d.x += d.drift * dt * 25;
-      d.y -= d.speed * dt * 15;
-      if (d.y < -5) {
-        d.y = H * 0.8 + rand(0, 50);
-        d.x = rand(0, W);
-      }
-      if (d.x < 0) d.x = W;
-      if (d.x > W) d.x = 0;
-    }
-
-    // Spawn logic
     const active = this.enemies.filter(e => e.state !== 'dead').length;
-    const maxActive = clamp(2 + Math.floor(this.wave * 0.6), 1, 4);
+    const maxActive = clamp(2 + Math.floor(this.wave * 0.45), 1, 5);
     if (active < maxActive && this.waveSpawned < this.waveEnemies) {
       this.spawnTimer -= dt;
-      if (this.spawnTimer <= 0) {
-        this.spawnTimer = this.spawnInterval + rand(0, 0.8);
-        this.spawnEnemy();
-      }
+      if (this.spawnTimer <= 0) { this.spawnTimer = this.spawnInterval + rand(0, 0.8); this.spawnEnemy(); }
     }
-
-    // Update each enemy
     this.enemies.forEach(e => this.updateEnemy(e, dt));
     this.enemies = this.enemies.filter(e => !(e.state === 'dead' && e.deadT <= 0));
-
-    // Update particles
     this.particles.forEach(p => {
       p.t -= dt;
       if (p.vx !== undefined) { p.x += p.vx; p.y += p.vy; p.vy += 0.18; }
@@ -450,1055 +785,1018 @@ class WesternShooter {
   }
 
   updateEnemy(e, dt) {
-    const spd = (115 + this.wave * 12) * dt;
+    const spd = (100 + this.wave * 8) * dt;
     switch (e.state) {
-
       case 'entering': {
-        // Walk animation
         e.walkT += dt;
         if (e.walkT > 0.14) { e.walkT = 0; e.walkFrame ^= 1; }
-        const dx = e.cover.x - e.drawX;
-        if (Math.abs(dx) <= spd) {
-          e.drawX   = e.cover.x;
-          e.state   = 'hiding';
-          e.hideT   = rand(0.4, 1.2);
-          e.visible = false;
+        const dx = e.slot.x - e.drawX, dy = e.slot.peekY - e.drawY;
+        if (Math.abs(dx) < spd && Math.abs(dy) < spd) {
+          e.drawX = e.slot.x; e.drawY = e.slot.peekY;
+          e.state = 'hiding'; e.hideT = rand(0.5, 1.4); e.visible = false;
         } else {
-          e.drawX += Math.sign(dx) * spd;
+          e.drawX += Math.sign(dx) * Math.min(spd, Math.abs(dx));
+          e.drawY += Math.sign(dy) * Math.min(spd * 0.5, Math.abs(dy));
         }
         break;
       }
-
+      case 'appearing': e.appearT -= dt; if (e.appearT <= 0) { e.state = 'hiding'; e.hideT = rand(0.3, 0.9); e.visible = false; } break;
       case 'hiding':
         e.hideT -= dt;
-        if (e.hideT <= 0) {
-          e.state   = 'warning';
-          e.warnT   = rand(0.45, 0.85);
-          e.visible = true;
-          e.drawY   = e.peekY + 30; // barely visible
-        }
+        if (e.hideT <= 0) { e.state = 'warning'; e.warnT = rand(0.5, 1.0); e.visible = true; e.drawY = e.peekY + (e.posType === 'cover' ? 28 : 16); }
         break;
-
       case 'warning':
         e.warnT -= dt;
-        // Slight bob — just the hat peak showing
-        e.drawY = e.peekY + 28 + Math.sin(this.time * 13.3) * 5;
-        if (e.warnT <= 0) {
-          e.state = 'peeking';
-          e.peekT = rand(0.85, 1.5);
-          e.drawY = e.peekY;
-        }
+        e.drawY = e.peekY + (e.posType === 'cover' ? 26 : 14) + Math.sin(this.time * 13) * 4;
+        if (e.warnT <= 0) { e.state = 'peeking'; e.peekT = rand(0.9, 1.6); e.drawY = e.peekY; }
         break;
-
-      case 'peeking':
-        e.peekT -= dt;
-        if (e.peekT <= 0) this.enemyShoot(e);
-        break;
-
-      case 'shooting':
-        e.shootT -= dt;
-        break;
-
-      case 'retreating':
-        e.retreatT -= dt;
-        e.drawY = e.peekY + (1 - clamp(e.retreatT / 0.45, 0, 1)) * 35;
-        break;
-
-      case 'dead':
-        e.deadT -= dt;
-        e.drawY  += dt * 55;
-        break;
+      case 'peeking': e.peekT -= dt; if (e.peekT <= 0) this.enemyShoot(e); break;
+      case 'shooting': e.shootT -= dt; break;
+      case 'retreating': e.retreatT -= dt; e.drawY = e.peekY + (1 - clamp(e.retreatT / 0.45, 0, 1)) * 32; break;
+      case 'dead': e.deadT -= dt; e.drawY += dt * 50; break;
     }
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ─── RENDER ─────────────────────────────────────────────────────────────────
   render() {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.save();
     ctx.translate(this.ox, this.oy);
     ctx.scale(this.scale, this.scale);
-
     switch (this.state) {
-      case 'intro':    this.drawIntro(ctx);    break;
-      case 'playing':  this.drawGame(ctx);     break;
+      case 'intro':    this.drawIntro(ctx); break;
+      case 'playing':  this.drawGame(ctx);  break;
+      case 'paused':   this.drawPaused(ctx); break;
       case 'gameover': this.drawGameOver(ctx); break;
     }
     ctx.restore();
   }
 
-  // ── Screens ───────────────────────────────────────────────────────────────
   drawIntro(ctx) {
-    this.drawScene(ctx);
-    ctx.fillStyle = 'rgba(0,0,0,0.74)';
-    ctx.fillRect(0, 0, W, H);
-
-    ctx.save();
-    ctx.textAlign = 'center';
-    ctx.font = 'bold 60px Georgia, serif';
-    ctx.strokeStyle = '#3D1F00';
-    ctx.lineWidth   = 5;
-    ctx.strokeText('WESTERN', W / 2, H / 2 - 88);
-    ctx.strokeText('SHOOTER', W / 2, H / 2 - 20);
+    this.drawScene(ctx); this.drawDoors(ctx);
+    ctx.fillStyle = 'rgba(0,0,0,0.72)'; ctx.fillRect(0, 0, W, H);
+    ctx.save(); ctx.textAlign = 'center';
+    ctx.font = 'bold 54px Georgia, serif';
+    ctx.strokeStyle = '#2A1000'; ctx.lineWidth = 6;
+    ctx.strokeText('OFFLINE', W / 2, H / 2 - 80);
+    ctx.strokeText('SHOOTER', W / 2, H / 2 - 18);
     ctx.fillStyle = '#FFD700';
-    ctx.fillText('WESTERN', W / 2, H / 2 - 88);
-    ctx.fillText('SHOOTER', W / 2, H / 2 - 20);
-
-    ctx.font = '19px Georgia, serif';
-    ctx.fillStyle = '#DEB887';
-    ctx.fillText('Enter the bar — shoot the outlaws!', W / 2, H / 2 + 32);
-    ctx.fillText('Tap enemies  •  6 bullets  •  Tap RELOAD', W / 2, H / 2 + 58);
+    ctx.fillText('OFFLINE', W / 2, H / 2 - 80);
+    ctx.fillText('SHOOTER', W / 2, H / 2 - 18);
+    ctx.font = '17px Georgia, serif'; ctx.fillStyle = '#DEB887';
+    ctx.fillText('The Sheriff cleans up the saloon!', W / 2, H / 2 + 24);
+    ctx.fillText('Tap outlaws  •  Spare civilians  •  6 bullets', W / 2, H / 2 + 48);
+    if (this.bestScore > 0) {
+      ctx.font = '16px Georgia, serif'; ctx.fillStyle = '#DAA520';
+      ctx.fillText(`High Score: ${this.bestScore}`, W / 2, H / 2 + 72);
+    }
     ctx.restore();
-
-    drawButton(ctx, W / 2, H / 2 + 120, 252, 54, 'ENTER THE BAR');
+    this.drawBtn(ctx, W / 2, H / 2 + 108, 240, 52, 'ENTER THE BAR');
+    this._drawCredit(ctx, H - 32);
   }
 
   drawGameOver(ctx) {
-    this.drawScene(ctx);
-    ctx.fillStyle = 'rgba(0,0,0,0.76)';
-    ctx.fillRect(0, 0, W, H);
-
-    ctx.save();
-    ctx.textAlign = 'center';
-    ctx.font = 'bold 56px Georgia, serif';
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth   = 4;
-    ctx.strokeText('GAME OVER', W / 2, H * 0.34);
-    ctx.fillStyle = '#CC1111';
-    ctx.fillText('GAME OVER', W / 2, H * 0.34);
-
-    ctx.font = 'bold 30px Georgia, serif';
-    ctx.fillStyle = '#FFD700';
-    ctx.fillText(`Score: ${this.score}`, W / 2, H * 0.46);
-    ctx.fillText(`Wave:  ${this.wave}`,  W / 2, H * 0.54);
-
+    this.drawScene(ctx); this.drawDoors(ctx);
+    ctx.fillStyle = 'rgba(0,0,0,0.74)'; ctx.fillRect(0, 0, W, H);
+    ctx.save(); ctx.textAlign = 'center';
+    ctx.font = 'bold 52px Georgia, serif';
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 4;
+    ctx.strokeText('GAME OVER', W / 2, H * 0.33);
+    ctx.fillStyle = '#CC1111'; ctx.fillText('GAME OVER', W / 2, H * 0.33);
+    ctx.font = 'bold 28px Georgia, serif'; ctx.fillStyle = '#FFD700';
+    ctx.fillText(`Score: ${this.score}`, W / 2, H * 0.45);
+    ctx.fillText(`Wave:  ${this.wave}`, W / 2, H * 0.53);
     if (this.bestScore > 0) {
-      ctx.font = '20px Georgia, serif';
-      ctx.fillStyle = '#DEB887';
-      ctx.fillText(`Best: ${this.bestScore}`, W / 2, H * 0.61);
+      ctx.font = '18px Georgia, serif'; ctx.fillStyle = '#DEB887';
+      ctx.fillText(`Best: ${this.bestScore}`, W / 2, H * 0.60);
     }
     ctx.restore();
-
-    drawButton(ctx, W / 2, H * 0.71, 216, 54, 'PLAY AGAIN');
+    this.drawBtn(ctx, W / 2, H * 0.70, 200, 52, 'PLAY AGAIN');
+    this._drawCredit(ctx, H - 32);
   }
 
+  drawPaused(ctx) {
+    this.drawScene(ctx); this.drawDoors(ctx);
+    for (const c of COVERS) this.drawCover(ctx, c);
+    for (const c of this.civilians) this.drawCivilian(ctx, c);
+    this.drawFPSGun(ctx); this.drawHUD(ctx);
+    ctx.fillStyle = 'rgba(0,0,0,0.58)'; ctx.fillRect(0, 0, W, H);
+    ctx.save(); ctx.textAlign = 'center';
+    ctx.font = 'bold 46px Georgia, serif';
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
+    ctx.strokeText('PAUSED', W / 2, H / 2 - 18);
+    ctx.fillStyle = '#FFD700'; ctx.fillText('PAUSED', W / 2, H / 2 - 18);
+    ctx.restore();
+    this.drawBtn(ctx, W / 2, H / 2 + 42, 180, 48, 'RESUME');
+    this._drawCredit(ctx, H - 32);
+  }
+
+  drawBtn(ctx, cx, cy, bw, bh, txt) {
+    const x = cx - bw / 2, y = cy - bh / 2;
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    drawRR(ctx, x + 2, y + 3, bw, bh, 8); ctx.fill();
+    const bg = ctx.createLinearGradient(x, y, x, y + bh);
+    bg.addColorStop(0, '#B85A20'); bg.addColorStop(1, '#7A3210');
+    ctx.fillStyle = bg; drawRR(ctx, x, y, bw, bh, 8); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,210,120,0.4)'; ctx.lineWidth = 1;
+    drawRR(ctx, x + 2, y + 2, bw - 4, bh - 4, 6); ctx.stroke();
+    ctx.fillStyle = '#FFE8B0'; ctx.font = 'bold 20px Georgia, serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(txt, cx, cy + 1); ctx.textBaseline = 'alphabetic';
+  }
+
+  // ── Main game draw ──────────────────────────────────────────────────────────
   drawGame(ctx) {
     this.drawScene(ctx);
 
-    // 1. Non-entering enemies drawn BEHIND cover objects (painter's algorithm)
-    for (const e of this.enemies) {
-      if (e.state !== 'entering' && e.visible) this.drawEnemy(ctx, e);
-    }
-    // 2. Cover objects drawn on top  → they visually occlude enemy lower bodies
+    // Balcony enemies + balcony civs → railing
+    for (const e of this.enemies) { if (e.posType === 'balcony' && e.visible) this.drawEnemy(ctx, e); }
+    for (const c of this.civilians) { if (c.type === 'doorCiv' && c.spawnMode === 'balcony') this.drawCivilian(ctx, c); }
+    this.drawBalconyRail(ctx);
+
+    // Doors FIRST, then entering enemies & door civs ON TOP
+    this.drawDoors(ctx);
+    for (const e of this.enemies) { if (e.state === 'entering' && e.visible) this.drawEnemy(ctx, e); }
+    for (const c of this.civilians) { if (c.type === 'doorCiv' && c.spawnMode === 'door' && (c.civState === 'entering' || c.civState === 'leaving')) this.drawCivilian(ctx, c); }
+
+    // Window enemies + window civs → frames
+    for (const e of this.enemies) { if (e.posType === 'window' && e.visible && e.state !== 'entering') this.drawEnemy(ctx, e); }
+    for (const c of this.civilians) { if (c.type === 'doorCiv' && c.spawnMode === 'window') this.drawCivilian(ctx, c); }
+    this.drawWindowFrames(ctx);
+
+    // Ground enemies → cover tables
+    for (const e of this.enemies) { if (e.posType === 'cover' && e.state !== 'entering' && e.visible) this.drawEnemy(ctx, e); }
     for (const c of COVERS) this.drawCover(ctx, c);
+    // Decorative tables
+    for (const dt of DECO_TABLES) this.drawRoundTable(ctx, dt.x, dt.y, dt.w, dt.h);
+    this.drawChairs(ctx);
 
-    // 3. Entering enemies drawn IN FRONT of cover (they're walking past furniture)
-    for (const e of this.enemies) {
-      if (e.state === 'entering') this.drawEnemy(ctx, e);
+    // Piano drawn ON TOP of tables for visibility
+    this.drawPiano(ctx);
+
+    // Ground-idle civs (static + idle door civs)
+    for (const c of this.civilians) {
+      if (c.type === 'doorCiv' && (c.spawnMode === 'window' || c.spawnMode === 'balcony')) continue;
+      if (c.type === 'doorCiv' && (c.civState === 'entering' || c.civState === 'leaving')) continue;
+      this.drawCivilian(ctx, c);
     }
 
-    // 4. Player arm & revolver (OTS foreground — drawn under FX so flash appears on top)
-    this.drawPlayerGun(ctx);
+    // FPS gun
+    this.drawFPSGun(ctx);
 
-    // 5. Particles / FX
+    // Particles
     this.drawParticles(ctx);
 
-    // 6. Red screen flash when player takes damage
-    if (this.hitFlash > 0) {
-      ctx.fillStyle = `rgba(200,0,0,${this.hitFlash * 0.58})`;
-      ctx.fillRect(0, 0, W, H);
-    }
+    // Screen flashes
+    if (this.hitFlash > 0) { ctx.fillStyle = `rgba(180,0,0,${this.hitFlash * 0.5})`; ctx.fillRect(0, 0, W, H); }
+    if (this.civFlash > 0) { ctx.fillStyle = `rgba(220,180,0,${this.civFlash * 0.45})`; ctx.fillRect(0, 0, W, H); }
 
-    // 7. "WAVE N" banner
-    if (this.waveBanner > 0 && this.waveBanner < 2.6) {
-      const alpha = clamp(Math.min(this.waveBanner, 2.6 - this.waveBanner) * 1.6, 0, 1);
-      ctx.save();
-      ctx.globalAlpha  = alpha;
-      ctx.textAlign    = 'center';
-      ctx.font         = 'bold 48px Georgia, serif';
-      ctx.strokeStyle  = '#000';
-      ctx.lineWidth    = 4;
-      ctx.strokeText(`WAVE ${this.wave}`, W / 2, H / 2 + 10);
-      ctx.fillStyle    = '#FFD700';
-      ctx.fillText(`WAVE ${this.wave}`, W / 2, H / 2 + 10);
+    // Floating alerts
+    for (const a of this.alerts) {
+      ctx.save(); ctx.globalAlpha = clamp(a.t, 0, 1);
+      ctx.font = 'bold 18px Georgia, serif'; ctx.textAlign = 'center';
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
+      ctx.strokeText(a.text, a.x, a.y);
+      ctx.fillStyle = a.color; ctx.fillText(a.text, a.x, a.y);
       ctx.restore();
     }
 
+    // Wave banner
+    if (this.waveBanner > 0 && this.waveBanner < 2.5) {
+      const a = clamp(Math.min(this.waveBanner, 2.5 - this.waveBanner) * 1.8, 0, 1);
+      ctx.save(); ctx.globalAlpha = a; ctx.textAlign = 'center';
+      ctx.font = 'bold 44px Georgia, serif';
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 4;
+      ctx.strokeText(`WAVE ${this.wave}`, W / 2, H * 0.38);
+      ctx.fillStyle = '#FFD700'; ctx.fillText(`WAVE ${this.wave}`, W / 2, H * 0.38);
+      ctx.restore();
+    }
+
+    this.drawCrosshair(ctx);
     this.drawHUD(ctx);
   }
 
-  // ── Scene background ──────────────────────────────────────────────────────
+  // ─── SCENE ──────────────────────────────────────────────────────────────────
   drawScene(ctx) {
-    // ── Wooden wall planks ──
+    // Ceiling
+    for (let i = 0; i < 5; i++) {
+      ctx.fillStyle = i % 2 ? '#4E3614' : '#5A4018';
+      ctx.fillRect(0, i * 18, W, 18);
+      ctx.fillStyle = '#3A2808'; ctx.fillRect(0, i * 18 + 16, W, 2);
+    }
+    // Wall
     for (let i = 0; i < 9; i++) {
-      ctx.fillStyle = i % 2 === 0 ? '#7A5E22' : '#6B5018';
-      ctx.fillRect(0, i * 52, W, 52);
-      ctx.fillStyle = '#4A350E';
-      ctx.fillRect(0, i * 52 + 50, W, 3);
+      const y0 = WALL_TOP + i * 22;
+      ctx.fillStyle = i % 2 ? '#6B5018' : '#7A5E22';
+      ctx.fillRect(0, y0, W, 22);
+      ctx.fillStyle = '#4A350E'; ctx.fillRect(0, y0 + 20, W, 2);
     }
-
-    // ── Wanted posters ──
-    this.drawWanted(ctx,  48,  60);
-    this.drawWanted(ctx, 192,  44);
-    this.drawWanted(ctx, 336,  68);
-
-    // ── Bar counter (back of room) ──
-    ctx.fillStyle = '#8B4513';
-    ctx.fillRect(0, 300, W, 64);
-    ctx.fillStyle = '#A0562A';
-    ctx.fillRect(0, 300, W, 10); // top highlight
-    ctx.fillStyle = '#5C2E08';
-    ctx.fillRect(0, 357, W, 7);  // shadow
-
-    // Shelf above counter
-    ctx.fillStyle = '#6B3A10';
-    ctx.fillRect(0, 278, W, 24);
-
-    // Bottles on shelf
-    this.drawBottles(ctx, 284);
-
-    // ── Door ──
-    this.drawDoor(ctx);
-
-    // ── Floor ──
-    for (let i = 0; i < 10; i++) {
-      ctx.fillStyle = i % 2 === 0 ? '#7A3E1A' : '#6B3415';
-      ctx.fillRect(0, 490 + i * 24, W, 24);
-      ctx.fillStyle = '#4A2410';
-      ctx.fillRect(0, 490 + i * 24 + 22, W, 2);
+    // Wanted posters — clear of door frame and window
+    this.drawWanted(ctx, 108, 170);
+    this.drawWanted(ctx, 320, 170);
+    // Window backs
+    for (const w of WINDOWS) this.drawWindowBack(ctx, w);
+    // Shelf + bottles
+    ctx.fillStyle = '#6B3A10'; ctx.fillRect(0, BAR_Y - 48, W, 18);
+    this.drawBottles(ctx);
+    // Bar counter
+    const barGrad = ctx.createLinearGradient(0, BAR_Y, 0, BAR_Y + BAR_H);
+    barGrad.addColorStop(0, '#A0562A'); barGrad.addColorStop(0.1, '#8B4513');
+    barGrad.addColorStop(0.9, '#6B300E'); barGrad.addColorStop(1, '#4A2008');
+    ctx.fillStyle = barGrad; ctx.fillRect(0, BAR_Y, W, BAR_H);
+    ctx.fillStyle = '#B8682E'; ctx.fillRect(0, BAR_Y, W, 4);
+    this.drawBarItems(ctx);
+    // Dark door opening
+    ctx.fillStyle = '#060300';
+    ctx.fillRect(DOOR_CX - DOOR_W / 2, DOOR_TOP, DOOR_W, DOOR_BOT - DOOR_TOP);
+    // Door frame
+    ctx.fillStyle = '#3A2008';
+    ctx.fillRect(DOOR_CX - DOOR_W / 2 - 8, DOOR_TOP - 6, DOOR_W + 16, 6);
+    ctx.fillRect(DOOR_CX - DOOR_W / 2 - 8, DOOR_TOP - 6, 8, DOOR_BOT - DOOR_TOP + 12);
+    ctx.fillRect(DOOR_CX + DOOR_W / 2, DOOR_TOP - 6, 8, DOOR_BOT - DOOR_TOP + 12);
+    // "SALOON" sign
+    ctx.fillStyle = '#4A2808';
+    drawRR(ctx, DOOR_CX - 40, DOOR_TOP - 30, 80, 22, 3); ctx.fill();
+    ctx.fillStyle = '#DAA520'; ctx.font = 'bold 13px Georgia, serif'; ctx.textAlign = 'center';
+    ctx.fillText('SALOON', DOOR_CX, DOOR_TOP - 13);
+    // Floor
+    for (let i = 0; i < 12; i++) {
+      ctx.fillStyle = i % 2 ? '#6B3415' : '#7A3E1A';
+      ctx.fillRect(0, FLOOR_Y + i * 22, W, 22);
+      ctx.fillStyle = '#4A2410'; ctx.fillRect(0, FLOOR_Y + i * 22 + 20, W, 2);
     }
-
-    // ── Chandelier ──
-    ctx.strokeStyle = '#8B6914';
-    ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, 38); ctx.stroke();
-    // Chain links
-    for (let j = 0; j < 3; j++) {
-      ctx.strokeStyle = '#8B6914';
-      ctx.lineWidth = 5;
-      ctx.beginPath();
-      ctx.ellipse(W / 2, 10 + j * 10, 4, 6, 0, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    ctx.fillStyle = '#DAA520';
-    ctx.beginPath(); ctx.arc(W / 2, 42, 22, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#B8860B';
-    ctx.beginPath(); ctx.arc(W / 2, 42, 14, 0, Math.PI * 2); ctx.fill();
-    // Flames
-    for (let j = -2; j <= 2; j++) {
-      ctx.fillStyle = '#FF8C00';
-      ctx.beginPath(); ctx.arc(W / 2 + j * 11, 31, 4.5, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#FFD700';
-      ctx.beginPath(); ctx.arc(W / 2 + j * 11, 28, 2.5, 0, Math.PI * 2); ctx.fill();
-    }
-
-    // ── Warm light cone from chandelier ──
-    const lcg = ctx.createRadialGradient(W / 2, 42, 0, W / 2, 42, 360);
-    lcg.addColorStop(0,    'rgba(255,210,100,0.22)');
-    lcg.addColorStop(0.45, 'rgba(255,170,50,0.07)');
-    lcg.addColorStop(1,    'rgba(0,0,0,0)');
-    ctx.fillStyle = lcg;
-    ctx.fillRect(0, 0, W, H);
-
-    // ── Vignette (dark edges for cinematic depth) ──
-    const vig = ctx.createRadialGradient(W / 2, H * 0.44, H * 0.22, W / 2, H * 0.44, H * 0.82);
-    vig.addColorStop(0, 'rgba(0,0,0,0)');
-    vig.addColorStop(1, 'rgba(0,0,0,0.65)');
-    ctx.fillStyle = vig;
-    ctx.fillRect(0, 0, W, H);
-
-    // ── Floating dust motes ──
+    // Chandelier
+    this.drawChandelier(ctx);
+    // Light cone
+    const lg = ctx.createRadialGradient(W / 2, 40, 0, W / 2, 40, 340);
+    lg.addColorStop(0, 'rgba(255,210,100,0.18)');
+    lg.addColorStop(0.5, 'rgba(255,170,50,0.06)');
+    lg.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = lg; ctx.fillRect(0, 0, W, H);
+    // Vignette
+    const vig = ctx.createRadialGradient(W / 2, H * 0.42, H * 0.2, W / 2, H * 0.42, H * 0.85);
+    vig.addColorStop(0, 'rgba(0,0,0,0)'); vig.addColorStop(1, 'rgba(0,0,0,0.6)');
+    ctx.fillStyle = vig; ctx.fillRect(0, 0, W, H);
+    // Dust
     ctx.save();
-    for (const d of this.dustMotes) {
-      ctx.globalAlpha = d.alpha;
-      ctx.fillStyle = '#FFE0A0';
-      ctx.beginPath();
-      ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
-      ctx.fill();
+    for (const d of this.dust) {
+      ctx.globalAlpha = d.a; ctx.fillStyle = '#FFE0A0';
+      ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2); ctx.fill();
     }
     ctx.restore();
+  }
+
+  // ── Batwing Doors — LOW position, large open space ABOVE ──
+  drawDoors(ctx) {
+    const halfW = DOOR_W / 2 - 2;
+    const panelH = DOOR_PANEL_H;
+    const louverH = panelH * 0.55;
+    const aL = this.door.angleL;
+    const aR = this.door.angleR;
+
+    ctx.save();
+    ctx.translate(DOOR_CX, DOOR_PANEL_TOP);
+
+    // Left panel
+    ctx.save();
+    ctx.translate(-halfW, 0);
+    ctx.scale(Math.cos(aL), 1);
+    this.drawBatwingPanel(ctx, 0, 0, halfW, panelH, louverH, false);
+    ctx.restore();
+
+    // Right panel
+    ctx.save();
+    ctx.translate(halfW, 0);
+    ctx.scale(-Math.cos(aR), 1);
+    this.drawBatwingPanel(ctx, 0, 0, halfW, panelH, louverH, true);
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  drawBatwingPanel(ctx, x, y, w, h, louverH, mirror) {
+    const pGrad = ctx.createLinearGradient(x, y, x + w, y);
+    pGrad.addColorStop(0, '#9B6020'); pGrad.addColorStop(0.3, '#8B5018');
+    pGrad.addColorStop(0.7, '#7A4414'); pGrad.addColorStop(1, '#6A3810');
+    ctx.fillStyle = pGrad; ctx.fillRect(x, y, w, h);
+
+    ctx.fillStyle = '#6A3810';
+    ctx.fillRect(x, y, w, 5);        // top rail
+    ctx.fillRect(x, y + h - 5, w, 5); // bottom rail
+    ctx.fillRect(x, y + louverH + 8, w, 4); // middle rail
+
+    // Louvers
+    const slotCount = 7, slotStart = y + 8;
+    for (let i = 0; i < slotCount; i++) {
+      const sy = slotStart + (i / slotCount) * louverH;
+      const sp = louverH / slotCount;
+      ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(x + 3, sy, w - 6, 1);
+      const sG = ctx.createLinearGradient(x, sy, x, sy + sp * 0.7);
+      sG.addColorStop(0, '#A8702C'); sG.addColorStop(0.5, '#8B5A20'); sG.addColorStop(1, '#7A4A18');
+      ctx.fillStyle = sG; ctx.fillRect(x + 3, sy + 1, w - 6, sp * 0.55);
+      ctx.fillStyle = 'rgba(255,220,150,0.12)'; ctx.fillRect(x + 3, sy + 1, w - 6, 1);
+    }
+
+    // Solid bottom panel
+    const solidY = y + louverH + 12, solidH = h - louverH - 17;
+    ctx.fillStyle = '#7A4A18'; ctx.fillRect(x + 2, solidY, w - 4, solidH);
+
+    // Scalloped edge
+    ctx.fillStyle = '#6A3810';
+    ctx.beginPath();
+    ctx.moveTo(x, y + h - 5);
+    ctx.quadraticCurveTo(x + w * 0.25, y + h + 5, x + w * 0.5, y + h - 5);
+    ctx.quadraticCurveTo(x + w * 0.75, y + h + 5, x + w, y + h - 5);
+    ctx.lineTo(x + w, y + h); ctx.lineTo(x, y + h); ctx.closePath(); ctx.fill();
+
+    // Wood grain
+    ctx.strokeStyle = 'rgba(40,20,5,0.15)'; ctx.lineWidth = 0.6;
+    for (let i = 0; i < 3; i++) {
+      const gy = solidY + 4 + i * (solidH / 3);
+      ctx.beginPath(); ctx.moveTo(x + 4, gy);
+      ctx.quadraticCurveTo(x + w / 2, gy + (i % 2 ? 2 : -2), x + w - 4, gy + 1); ctx.stroke();
+    }
+
+    // Stiles
+    ctx.fillStyle = 'rgba(0,0,0,0.12)';
+    ctx.fillRect(x, y, 3, h); ctx.fillRect(x + w - 3, y, 3, h);
+
+    // Hinge pins (always on wall side; mirror flips via scale)
+    ctx.fillStyle = '#C8A030';
+    const hx = x + 2;
+    [y + 12, y + h / 2, y + h - 12].forEach(hy => {
+      ctx.beginPath(); ctx.arc(hx, hy, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#8A6A10'; ctx.lineWidth = 0.8; ctx.stroke();
+    });
+  }
+
+  // ── Windows ─────────────────────────────────────────────────────────────────
+  drawWindowBack(ctx, win) {
+    const x = win.x - win.w / 2, y = win.y - win.h / 2;
+    ctx.fillStyle = '#070308'; ctx.fillRect(x + 3, y + 3, win.w - 6, win.h - 6);
+    ctx.fillStyle = 'rgba(20,30,60,0.35)'; ctx.fillRect(x + 3, y + 3, win.w - 6, win.h - 6);
+    ctx.fillStyle = 'rgba(255,255,200,0.3)';
+    ctx.beginPath(); ctx.arc(x + 12, y + 12, 1, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + win.w - 14, y + 18, 1.2, 0, Math.PI * 2); ctx.fill();
+  }
+
+  drawWindowFrames(ctx) {
+    for (const win of WINDOWS) {
+      const x = win.x - win.w / 2, y = win.y - win.h / 2;
+      ctx.strokeStyle = '#4A2C08'; ctx.lineWidth = 5; ctx.strokeRect(x, y, win.w, win.h);
+      ctx.fillStyle = '#5A3A10'; ctx.fillRect(x - 3, y + win.h - 2, win.w + 6, 6);
+      ctx.strokeStyle = '#4A2C08'; ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(win.x, y); ctx.lineTo(win.x, y + win.h);
+      ctx.moveTo(x, win.y); ctx.lineTo(x + win.w, win.y); ctx.stroke();
+      ctx.fillStyle = '#5A3A1E'; ctx.fillRect(x - 10, y, 10, win.h); ctx.fillRect(x + win.w, y, 10, win.h);
+      ctx.strokeStyle = '#3A2210'; ctx.lineWidth = 0.8;
+      for (let i = 0; i < 5; i++) {
+        const sy = y + 6 + i * (win.h / 5);
+        ctx.beginPath();
+        ctx.moveTo(x - 9, sy); ctx.lineTo(x - 1, sy);
+        ctx.moveTo(x + win.w + 1, sy); ctx.lineTo(x + win.w + 9, sy); ctx.stroke();
+      }
+    }
+  }
+
+  drawBalconyRail(ctx) {
+    ctx.fillStyle = '#5A3210'; ctx.fillRect(0, RAIL_Y, W, 5);
+    ctx.fillStyle = '#6B3A10'; ctx.fillRect(0, BALCONY_Y, W, 6);
+    ctx.fillStyle = '#7A4A18';
+    for (let i = 0; i < 17; i++) ctx.fillRect(12 + i * 28, BALCONY_Y + 5, 5, RAIL_Y - BALCONY_Y - 4);
+    ctx.fillStyle = '#5A3210';
+    for (let i = 0; i < 5; i++) {
+      const px = 56 + i * 95;
+      ctx.fillRect(px, BALCONY_Y - 2, 8, RAIL_Y - BALCONY_Y + 8);
+      ctx.fillStyle = '#7A5020'; ctx.fillRect(px - 2, BALCONY_Y - 4, 12, 4);
+      ctx.fillStyle = '#5A3210';
+    }
+  }
+
+  // ── Scene props ─────────────────────────────────────────────────────────────
+  drawChandelier(ctx) {
+    const cx = W / 2, cy = 36;
+    ctx.strokeStyle = '#8B6914'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, cy - 8); ctx.stroke();
+    ctx.fillStyle = '#B8860B'; ctx.beginPath(); ctx.arc(cx, cy, 18, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#DAA520'; ctx.beginPath(); ctx.arc(cx, cy, 10, 0, Math.PI * 2); ctx.fill();
+    for (let j = -2; j <= 2; j++) {
+      ctx.fillStyle = '#FF8C00'; ctx.beginPath(); ctx.arc(cx + j * 9, cy - 8, 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#FFD700'; ctx.beginPath(); ctx.arc(cx + j * 9, cy - 11, 1.8, 0, Math.PI * 2); ctx.fill();
+    }
   }
 
   drawWanted(ctx, x, y) {
-    // Parchment
-    ctx.fillStyle = '#DEB87A';
-    ctx.fillRect(x, y, 62, 82);
-    ctx.strokeStyle = '#7A4510';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x, y, 62, 82);
-    // "WANTED" header
-    ctx.fillStyle = '#8B0000';
-    ctx.font = 'bold 9px Georgia, serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('WANTED', x + 31, y + 14);
-    // Simple outlaw face
-    ctx.fillStyle = '#C8A070';
-    ctx.beginPath(); ctx.arc(x + 31, y + 38, 13, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#2C1810';
-    ctx.fillRect(x + 17, y + 23, 28, 5);
-    ctx.fillRect(x + 20, y + 16, 22, 10);
-    ctx.fillStyle = '#8B0000';
-    ctx.font = '6px Georgia, serif';
-    ctx.fillText('DEAD OR ALIVE', x + 31, y + 72);
+    ctx.fillStyle = '#DEB87A'; ctx.fillRect(x, y, 52, 66);
+    ctx.strokeStyle = '#7A4510'; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, 52, 66);
+    ctx.fillStyle = '#8B0000'; ctx.font = 'bold 7px Georgia, serif'; ctx.textAlign = 'center';
+    ctx.fillText('WANTED', x + 26, y + 10);
+    ctx.fillStyle = '#C8A070'; ctx.beginPath(); ctx.arc(x + 26, y + 28, 10, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#2C1810'; ctx.fillRect(x + 15, y + 20, 22, 4); ctx.fillRect(x + 17, y + 15, 18, 8);
+    ctx.fillStyle = '#8B0000'; ctx.font = '5px Georgia, serif';
+    ctx.fillText('DEAD OR ALIVE', x + 26, y + 55);
     ctx.textAlign = 'left';
   }
 
-  drawBottles(ctx, shelfY) {
-    const colors = ['#2E7B44', '#8B1A1A', '#DAA520', '#1A3A7A', '#6B3A6B'];
-    const xs     = [22, 60, 100, 148, 192, 250, 295, 345, 390, 432];
-    xs.forEach((bx, i) => {
-      const col = colors[i % colors.length];
-      ctx.fillStyle = col;
-      ctx.fillRect(bx, shelfY + 4, 14, 28);   // body
-      ctx.fillRect(bx + 4, shelfY - 2, 6, 8); // neck
-      ctx.fillStyle = '#DEB887';
-      ctx.fillRect(bx + 4, shelfY - 7, 6, 6); // cork
-      ctx.fillStyle = 'rgba(255,255,255,0.18)';
-      ctx.fillRect(bx + 2, shelfY + 6, 4, 18);
+  drawBottles(ctx) {
+    for (const b of this.bottles) {
+      if (!b.alive) continue;
+      ctx.fillStyle = b.color;
+      ctx.fillRect(b.x, b.y, 10, 20);
+      ctx.fillRect(b.x + 2, b.y - 4, 6, 6);
+      ctx.fillStyle = '#DEB887'; ctx.fillRect(b.x + 2, b.y - 7, 6, 4);
+      ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(b.x + 1, b.y + 2, 3, 14);
+    }
+  }
+
+  drawBarItems(ctx) {
+    const y = BAR_Y - 1;
+    [95, 175, 285, 405].forEach(bx => {
+      ctx.fillStyle = 'rgba(200,180,100,0.6)'; ctx.fillRect(bx, y - 12, 9, 12);
+      ctx.fillStyle = 'rgba(255,255,200,0.35)'; ctx.fillRect(bx + 1, y - 10, 3, 7);
+      ctx.strokeStyle = 'rgba(140,120,60,0.5)'; ctx.lineWidth = 0.8; ctx.strokeRect(bx, y - 12, 9, 12);
     });
+    ctx.fillStyle = '#8B5A2B'; ctx.fillRect(442, y - 18, 10, 18); ctx.fillRect(445, y - 23, 4, 7);
   }
 
-  drawDoor(ctx) {
-    const x = DOOR_CX - DOOR_W / 2 - 4;
-    const y = DOOR_CY - DOOR_H / 2 - 4;
-    const w = DOOR_W + 8, h = DOOR_H + 8;
-
-    // Door frame
-    ctx.fillStyle = '#4A2C08';
-    ctx.fillRect(x, y, w, h);
-
-    // "SALOON" sign above door
-    ctx.fillStyle = '#FFD700';
-    ctx.font = 'bold 14px Georgia, serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('SALOON', DOOR_CX, y - 6);
-
-    // Door background (opening)
-    ctx.fillStyle = '#1A0A00';
-    ctx.fillRect(DOOR_CX - DOOR_W / 2, DOOR_CY - DOOR_H / 2, DOOR_W, DOOR_H);
-
-    // Swing panels (perspective skew via x-scale)
-    const swingAmt = Math.sin(this.doorSwing * Math.PI) * 0.7;
-    const halfW = DOOR_W / 2 - 2;
-    ctx.save();
-    ctx.translate(DOOR_CX, DOOR_CY);
-    // Left panel
-    ctx.save();
-    ctx.scale(1 - swingAmt * 0.5, 1);
-    ctx.fillStyle = '#8B4513';
-    ctx.fillRect(-halfW - 1, -DOOR_H / 2, halfW, DOOR_H);
-    ctx.fillStyle = 'rgba(0,0,0,0.15)';
-    ctx.fillRect(-halfW - 1, -DOOR_H / 2, 4, DOOR_H);
-    ctx.fillStyle = '#DAA520';
-    ctx.beginPath(); ctx.arc(-6, 0, 5, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-    // Right panel
-    ctx.save();
-    ctx.scale(1 - swingAmt * 0.5, 1);
-    ctx.fillStyle = '#7A3E10';
-    ctx.fillRect(2, -DOOR_H / 2, halfW, DOOR_H);
-    ctx.fillStyle = 'rgba(0,0,0,0.15)';
-    ctx.fillRect(halfW - 2, -DOOR_H / 2, 4, DOOR_H);
-    ctx.fillStyle = '#DAA520';
-    ctx.beginPath(); ctx.arc(6, 0, 5, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-    ctx.restore();
-  }
-
-  drawCover(ctx, c) {
-    if (c.type === 'barrel') this.drawBarrel(ctx, c.x, c.y, c.w, c.h);
-    else                     this.drawTable(ctx,  c.x, c.y, c.w, c.h);
-  }
-
-  drawBarrel(ctx, cx, cy, w, h) {
-    const rx = w / 2, ry = h / 2;
+  // ── Upright Piano — LEFT side, drawn on top of tables ──
+  drawPiano(ctx) {
+    const px = 2, py = 405;
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.beginPath(); ctx.ellipse(px + 34, py + 42, 36, 7, 0, 0, Math.PI * 2); ctx.fill();
     // Body
-    ctx.fillStyle = '#8B4513';
-    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
-    // Wood grain rings
-    ctx.strokeStyle = '#5C2E08';
-    ctx.lineWidth = 4;
-    [-0.4, 0, 0.4].forEach(offset => {
-      ctx.beginPath();
-      ctx.ellipse(cx, cy + offset * h * 0.35, rx - 6, 9, 0, 0, Math.PI * 2);
-      ctx.stroke();
-    });
-    // Highlight
-    ctx.fillStyle = 'rgba(255,200,100,0.13)';
-    ctx.beginPath(); ctx.ellipse(cx - rx * 0.3, cy - ry * 0.3, rx * 0.32, ry * 0.25, -0.4, 0, Math.PI * 2); ctx.fill();
-  }
-
-  drawTable(ctx, cx, cy, w, h) {
-    const x = cx - w / 2, y = cy - h / 2;
-    const topH = h * 0.38;
-    // Tabletop
-    ctx.fillStyle = '#8B6914';
-    ctx.fillRect(x, y, w, topH);
-    ctx.fillStyle = '#A07820';
-    ctx.fillRect(x, y, w, 5);
+    ctx.fillStyle = '#1A0A04'; ctx.fillRect(px, py - 62, 68, 84);
+    // Top lid
+    ctx.fillStyle = '#2A1400'; ctx.fillRect(px - 3, py - 68, 74, 8);
+    ctx.fillStyle = '#3A2000'; ctx.fillRect(px - 3, py - 68, 74, 2);
+    // Inner panel
+    ctx.fillStyle = '#0A0604'; ctx.fillRect(px + 4, py - 56, 60, 62);
+    // Music stand
+    ctx.fillStyle = '#E8E0D0'; ctx.fillRect(px + 16, py - 58, 30, 10);
+    ctx.fillStyle = '#444';
+    [18, 26, 34, 40].forEach(mx => ctx.fillRect(px + mx, py - 56, 1, 6));
+    // Keys
+    const keyY = py + 14;
+    for (let i = 0; i < 15; i++) ctx.fillStyle = '#F0E8D8', ctx.fillRect(px + 4 + i * 4, keyY, 3.2, 12);
+    ctx.fillStyle = '#111';
+    [1, 2, 4, 5, 6, 8, 9, 11, 12].forEach(k => { if (k < 15) ctx.fillRect(px + 4 + k * 4 - 1, keyY, 2.2, 7); });
+    // Key shelf
+    ctx.fillStyle = '#2A1400'; ctx.fillRect(px, py + 10, 68, 5);
     // Legs
-    ctx.fillStyle = '#6B4A10';
-    [[x + 6, y + topH - 2, 13, h - topH + 2],
-     [x + w - 19, y + topH - 2, 13, h - topH + 2]].forEach(([lx, ly, lw, lh]) => {
-      ctx.fillRect(lx, ly, lw, lh);
-    });
-    // Items on table (glasses)
-    ctx.fillStyle = 'rgba(180,220,255,0.55)';
-    [[cx - 22, y + 12], [cx + 12, y + 11]].forEach(([gx, gy]) => {
-      ctx.beginPath(); ctx.arc(gx, gy, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1A0A04';
+    ctx.fillRect(px + 4, py + 22, 6, 24); ctx.fillRect(px + 58, py + 22, 6, 24);
+    // Cross brace
+    ctx.fillStyle = '#2A1400'; ctx.fillRect(px + 9, py + 36, 50, 3);
+    // Pedals
+    ctx.fillStyle = '#B8860B';
+    ctx.fillRect(px + 22, py + 40, 5, 5); ctx.fillRect(px + 38, py + 40, 5, 5);
+    // Candle holders
+    ctx.fillStyle = '#C8A030';
+    ctx.fillRect(px + 10, py - 75, 3, 8); ctx.fillRect(px + 55, py - 75, 3, 8);
+    ctx.fillStyle = '#FF8C00';
+    ctx.beginPath(); ctx.arc(px + 11.5, py - 77, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(px + 56.5, py - 77, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath(); ctx.arc(px + 11.5, py - 79, 1.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(px + 56.5, py - 79, 1.2, 0, Math.PI * 2); ctx.fill();
+  }
+
+  drawChairs(ctx) {
+    [110, 150, 228, 288, 365, 405].forEach(cx => {
+      const cy = 440 + (cx % 3) * 2;
+      ctx.fillStyle = '#7A4A18'; ctx.fillRect(cx - 8, cy, 16, 4);
+      ctx.fillStyle = '#6B3A10'; ctx.fillRect(cx - 8, cy - 12, 16, 3);
+      ctx.fillStyle = '#5A3210';
+      ctx.fillRect(cx - 7, cy + 4, 3, 10); ctx.fillRect(cx + 4, cy + 4, 3, 10);
+      ctx.fillRect(cx - 7, cy - 9, 3, 13); ctx.fillRect(cx + 4, cy - 9, 3, 13);
     });
   }
 
-  // ── Enemy sprite ──────────────────────────────────────────────────────────
+  // ── Cover / Round Table ─────────────────────────────────────────────────────
+  drawCover(ctx, c) { this.drawRoundTable(ctx, c.x, c.y, c.w, c.h); }
+
+  drawRoundTable(ctx, cx, cy, w, h) {
+    const rx = w / 2, topRy = 14;
+    // Leg
+    ctx.fillStyle = '#6B4A10'; ctx.fillRect(cx - 3, cy + 2, 6, h / 2 + 4);
+    ctx.strokeStyle = '#5A3A10'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(cx - rx * 0.6, cy + h / 2 + 6); ctx.lineTo(cx + rx * 0.6, cy + h / 2 + 6); ctx.stroke();
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.beginPath(); ctx.ellipse(cx + 2, cy + 3, rx, topRy + 1, 0, 0, Math.PI * 2); ctx.fill();
+    // Top
+    const tg = ctx.createRadialGradient(cx - 5, cy - 3, 2, cx, cy, rx);
+    tg.addColorStop(0, '#B8862A'); tg.addColorStop(0.5, '#A07820'); tg.addColorStop(1, '#7A5A10');
+    ctx.fillStyle = tg;
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx, topRy, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#5A3A08'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx, topRy, 0, 0, Math.PI * 2); ctx.stroke();
+    // Highlight
+    ctx.strokeStyle = 'rgba(255,220,150,0.15)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.ellipse(cx, cy - 1, rx - 3, topRy - 2, 0, Math.PI + 0.3, -0.3); ctx.stroke();
+    // Glass
+    ctx.fillStyle = 'rgba(180,220,255,0.4)';
+    ctx.beginPath(); ctx.arc(cx - 10, cy - 2, 4.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(200,170,60,0.5)';
+    ctx.beginPath(); ctx.arc(cx + 12, cy - 1, 4, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // ── Enemies ─────────────────────────────────────────────────────────────────
   drawEnemy(ctx, e) {
     if (!e.visible && e.state !== 'entering') return;
-    const outfit = OUTFITS[e.outfit];
-    const x = e.drawX, y = e.drawY;
-    const isHit = e.state === 'retreating';
-
+    const o = OUTFITS[e.outfit], x = e.drawX, y = e.drawY;
     ctx.save();
-    if (isHit) ctx.globalAlpha = 0.7 + Math.sin(this.time * 20) * 0.3;
+    if (e.state === 'retreating') ctx.globalAlpha = 0.7 + Math.sin(this.time * 20) * 0.3;
+    if (e.state === 'dead') ctx.globalAlpha = clamp(e.deadT / 0.7, 0, 1);
 
-    // Shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.28)';
-    ctx.beginPath(); ctx.ellipse(x, y + 58, 22, 7, 0, 0, Math.PI * 2); ctx.fill();
-
-    // Legs (only when walking in)
+    if (e.posType === 'cover' || e.state === 'entering') {
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.beginPath(); ctx.ellipse(x, y + 48, 18, 5, 0, 0, Math.PI * 2); ctx.fill();
+    }
     if (e.state === 'entering') {
-      const legOff = e.walkFrame === 0 ? 6 : -6;
-      ctx.fillStyle = outfit.pants;
-      ctx.fillRect(x - 10,        y + 27, 10, 30);
-      ctx.fillRect(x + 1,         y + 27, 10, 30);
+      const lo = e.walkFrame ? 5 : -5;
+      ctx.fillStyle = o.pants;
+      ctx.fillRect(x - 9, y + 22, 8, 24); ctx.fillRect(x + 1, y + 22, 8, 24);
       ctx.fillStyle = '#1A0800';
-      ctx.fillRect(x - 12 + legOff, y + 53, 13, 8);  // boots
-      ctx.fillRect(x - 1 - legOff,  y + 53, 13, 8);
+      ctx.fillRect(x - 11 + lo, y + 44, 11, 6); ctx.fillRect(x - lo, y + 44, 11, 6);
     }
 
-    // Body
-    ctx.fillStyle = outfit.shirt;
-    ctx.fillRect(x - 14, y + 6, 28, 28);
+    ctx.fillStyle = o.shirt; ctx.fillRect(x - 12, y + 3, 24, 24);
+    ctx.fillStyle = '#2A1808'; ctx.fillRect(x - 12, y + 24, 24, 3);
+    ctx.fillStyle = '#DAA520'; ctx.fillRect(x - 3, y + 24, 6, 3);
+    ctx.fillStyle = '#C8844A';
+    ctx.beginPath(); ctx.arc(x, y - 8, 13, 0, Math.PI * 2); ctx.fill();
+    if (o.bandana) {
+      ctx.fillStyle = o.bandana;
+      ctx.beginPath();
+      ctx.moveTo(x - 13, y - 4); ctx.lineTo(x + 13, y - 4);
+      ctx.lineTo(x + 9, y + 5); ctx.lineTo(x, y + 7); ctx.lineTo(x - 9, y + 5);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.fillStyle = '#111';
+    ctx.beginPath(); ctx.arc(x - 4, y - 10, 2, 0, Math.PI * 2); ctx.arc(x + 4, y - 10, 2, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#111'; ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.moveTo(x - 8, y - 14); ctx.lineTo(x - 2, y - 12);
+    ctx.moveTo(x + 2, y - 12); ctx.lineTo(x + 8, y - 14); ctx.stroke();
+    if (o.scar) { ctx.strokeStyle = '#8B4040'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x - 7, y - 15); ctx.lineTo(x + 2, y + 1); ctx.stroke(); }
+    if (!o.bandana) {
+      ctx.fillStyle = '#3C2010';
+      ctx.beginPath(); ctx.ellipse(x - 4, y - 1, 4.5, 2.5, 0.3, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x + 4, y - 1, 4.5, 2.5, -0.3, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = o.hat;
+    ctx.beginPath(); ctx.ellipse(x, y - 18, 22, 4.5, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(x - 13, y - 38, 26, 20);
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.beginPath(); ctx.moveTo(x - 9, y - 38); ctx.quadraticCurveTo(x, y - 33, x + 9, y - 38);
+    ctx.lineTo(x + 9, y - 36); ctx.quadraticCurveTo(x, y - 31, x - 9, y - 36); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = o.band; ctx.fillRect(x - 13, y - 20, 26, 3);
 
-    // Suspenders
-    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-    ctx.lineWidth = 2;
+    if (e.state === 'peeking' || e.state === 'warning' || e.state === 'shooting') {
+      ctx.fillStyle = '#555'; ctx.fillRect(x - 24, y + 9, 18, 5);
+      ctx.fillStyle = '#333'; ctx.fillRect(x - 34, y + 10, 12, 3.5);
+      if (e.state === 'shooting') { ctx.save(); ctx.globalAlpha = 0.35; ctx.fillStyle = '#AAA'; ctx.beginPath(); ctx.arc(x - 36, y + 9, 5, 0, Math.PI * 2); ctx.fill(); ctx.restore(); }
+    }
+    if (e.maxHp > 1) {
+      for (let i = 0; i < e.maxHp; i++) { ctx.beginPath(); ctx.arc(x - 7 + i * 14, y - 50, 4.5, 0, Math.PI * 2); ctx.fillStyle = i < e.hp ? '#FF3333' : '#444'; ctx.fill(); }
+    }
+    if (e.state === 'warning') {
+      const p = 0.55 + Math.abs(Math.sin(this.time * 14)) * 0.45;
+      ctx.save(); ctx.globalAlpha = p; ctx.font = 'bold 20px Georgia, serif'; ctx.fillStyle = '#FFD700';
+      ctx.textAlign = 'center'; ctx.fillText('!', x, y - 54); ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  // ── Civilians ─────────────────────────────────────────────────────────────
+  drawCivilian(ctx, c) {
+    if (!c.alive) return;
+    ctx.save();
+    if (c.hitTimer > 0) ctx.globalAlpha = 0.5 + Math.sin(this.time * 15) * 0.3;
+    switch (c.type) {
+      case 'pianist':   this.drawPianist(ctx, c); break;
+      case 'bartender': this.drawBartender(ctx, c); break;
+      case 'patron':    this.drawPatron(ctx, c); break;
+      case 'poker1':    this.drawPokerPlayer(ctx, c, false); break;
+      case 'poker2':    this.drawPokerPlayer(ctx, c, true); break;
+      case 'drinker':   this.drawDrinker(ctx, c); break;
+      case 'doorCiv':   this.drawDoorCiv(ctx, c); break;
+    }
+    ctx.restore();
+  }
+
+  // ── Pianist — LEFT side next to piano ──
+  drawPianist(ctx, c) {
+    const x = 42, y = 430;
+    c.x = x; c.y = y;
+    const dy = c.scared > 0 ? 7 : 0;
+    const bobY = c.scared > 0 ? 0 : Math.sin(this.time * 5) * 1.5;
+    const armSwing = c.scared > 0 ? 0 : Math.sin(this.time * 8) * 4;
+
+    // Red dress
+    ctx.fillStyle = '#B22222';
     ctx.beginPath();
-    ctx.moveTo(x - 8, y + 6); ctx.lineTo(x - 5, y + 34);
-    ctx.moveTo(x + 8, y + 6); ctx.lineTo(x + 5, y + 34);
-    ctx.stroke();
+    ctx.moveTo(x - 14, y + 2 + dy + bobY); ctx.lineTo(x + 14, y + 2 + dy + bobY);
+    ctx.lineTo(x + 18, y + 32); ctx.lineTo(x - 18, y + 32);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#FFD700'; ctx.fillRect(x - 14, y + 1 + dy + bobY, 28, 2);
+    ctx.fillStyle = '#CC1818'; ctx.fillRect(x - 10, y - 6 + dy + bobY, 20, 12);
+
+    // Arms
+    ctx.fillStyle = '#E0B090';
+    ctx.beginPath();
+    ctx.moveTo(x - 10, y + dy + bobY); ctx.lineTo(x - 22 - armSwing, y + 8 + dy + bobY);
+    ctx.lineTo(x - 20 - armSwing, y + 12 + dy + bobY); ctx.lineTo(x - 8, y + 4 + dy + bobY);
+    ctx.closePath(); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(x + 10, y + dy + bobY); ctx.lineTo(x + 22 + armSwing, y + 8 + dy + bobY);
+    ctx.lineTo(x + 20 + armSwing, y + 12 + dy + bobY); ctx.lineTo(x + 8, y + 4 + dy + bobY);
+    ctx.closePath(); ctx.fill();
 
     // Head
-    ctx.fillStyle = '#C8844A';
-    ctx.beginPath(); ctx.arc(x, y - 8, 15, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#E0B090';
+    ctx.beginPath(); ctx.arc(x, y - 17 + dy + bobY, 11, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#8B3A1A';
+    ctx.beginPath(); ctx.arc(x, y - 19 + dy + bobY, 12, Math.PI + 0.4, -0.4); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + 1, y - 30 + dy + bobY, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath(); ctx.arc(x + 4, y - 32 + dy + bobY, 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#2A5A2A';
+    ctx.beginPath(); ctx.arc(x - 3, y - 18 + dy + bobY, 1.8, 0, Math.PI * 2);
+    ctx.arc(x + 3, y - 18 + dy + bobY, 1.8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#CC3333';
+    ctx.beginPath(); ctx.arc(x, y - 12 + dy + bobY, 2, 0, Math.PI); ctx.fill();
+    if (c.scared > 0) { ctx.strokeStyle = '#AA4444'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y - 11 + dy + bobY, 2.5, 0, Math.PI * 2); ctx.stroke(); }
 
-    // Eyes
-    ctx.fillStyle = '#111';
-    ctx.beginPath();
-    ctx.arc(x - 5, y - 10, 2.5, 0, Math.PI * 2);
-    ctx.arc(x + 5, y - 10, 2.5, 0, Math.PI * 2);
-    ctx.fill();
+    // Stool
+    ctx.fillStyle = '#8B2020'; ctx.fillRect(x - 12, y + 26, 24, 5);
+    ctx.fillStyle = '#5A3A1E'; ctx.fillRect(x - 8, y + 31, 4, 10); ctx.fillRect(x + 4, y + 31, 4, 10);
+  }
 
-    // Angry brows
-    ctx.strokeStyle = '#111'; ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(x - 9, y - 16); ctx.lineTo(x - 3, y - 13);
-    ctx.moveTo(x + 3, y - 13); ctx.lineTo(x + 9, y - 16);
-    ctx.stroke();
+  drawBartender(ctx, c) {
+    const x = c.x, y = c.y, dy = c.scared > 0 ? 8 : 0;
+    ctx.fillStyle = '#E8DCC8'; ctx.fillRect(x - 10, y - 2 + dy, 20, 22);
+    ctx.fillStyle = '#2A2A2A'; ctx.fillRect(x - 10, y - 2 + dy, 7, 22); ctx.fillRect(x + 3, y - 2 + dy, 7, 22);
+    ctx.fillStyle = '#E0D8C8'; ctx.fillRect(x - 9, y + 8 + dy, 18, 16);
+    ctx.fillStyle = '#D4A574'; ctx.beginPath(); ctx.arc(x, y - 13 + dy, 11, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#3A2A1A'; ctx.beginPath(); ctx.arc(x, y - 15 + dy, 11, Math.PI + 0.3, -0.3); ctx.fill();
+    ctx.fillStyle = '#3A2A1A';
+    ctx.beginPath(); ctx.ellipse(x - 4, y - 7 + dy, 5, 2.5, 0.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x + 4, y - 7 + dy, 5, 2.5, -0.2, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1A1A1A'; ctx.beginPath();
+    ctx.moveTo(x - 4, y - 3 + dy); ctx.lineTo(x, y - 1 + dy); ctx.lineTo(x + 4, y - 3 + dy);
+    ctx.lineTo(x, y - 5 + dy); ctx.closePath(); ctx.fill();
+  }
 
-    // Moustache
-    ctx.fillStyle = '#5C3010';
-    ctx.beginPath(); ctx.ellipse(x - 5, y - 1, 5, 3, 0.3, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(x + 5, y - 1, 5, 3, -0.3, 0, Math.PI * 2); ctx.fill();
-
-    // Cowboy hat brim
-    ctx.fillStyle = outfit.hat;
-    ctx.fillRect(x - 23, y - 20, 46, 7);
-    // Crown
-    ctx.fillRect(x - 15, y - 42, 30, 24);
-    // Hat band
-    ctx.fillStyle = outfit.band;
-    ctx.fillRect(x - 15, y - 22, 30, 5);
-
-    // Gun (visible when peeking / warning / shooting)
-    if (e.state === 'peeking' || e.state === 'warning' || e.state === 'shooting') {
-      ctx.fillStyle = '#555';
-      ctx.fillRect(x - 28, y + 12, 22, 7); // handle+cylinder
-      ctx.fillStyle = '#333';
-      ctx.fillRect(x - 38, y + 13, 12, 4); // barrel
+  drawPatron(ctx, c) {
+    const x = c.x, y = c.y, dy = c.scared > 0 ? 10 : 0;
+    ctx.fillStyle = '#6A8AA0'; ctx.fillRect(x - 9, y - 2 + dy, 18, 20);
+    ctx.fillStyle = '#D4A070'; ctx.beginPath(); ctx.arc(x, y - 13 + dy, 10, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#5A4A30'; ctx.fillRect(x - 12, y - 20 + dy, 24, 4); ctx.fillRect(x - 9, y - 28 + dy, 18, 9);
+    ctx.fillStyle = '#3A3A3A';
+    ctx.beginPath(); ctx.arc(x - 3, y - 14 + dy, 1.5, 0, Math.PI * 2); ctx.arc(x + 3, y - 14 + dy, 1.5, 0, Math.PI * 2); ctx.fill();
+    if (!c.scared) {
+      ctx.strokeStyle = '#D4A070'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(x + 9, y + 2); ctx.lineTo(x + 18, y - 3); ctx.stroke();
+      ctx.fillStyle = 'rgba(200,170,60,0.7)'; ctx.fillRect(x + 16, y - 10, 7, 10);
     }
+  }
 
-    // HP pips (for tanky enemies)
-    if (e.maxHp > 1) {
-      for (let i = 0; i < e.maxHp; i++) {
-        ctx.beginPath(); ctx.arc(x - 8 + i * 16, y - 58, 5, 0, Math.PI * 2);
-        ctx.fillStyle = i < e.hp ? '#FF3333' : '#444';
-        ctx.fill();
+  // ── Poker Player — sitting at decorative table with cards ──
+  drawPokerPlayer(ctx, c, flipped) {
+    const x = c.x, y = c.y, dy = c.scared > 0 ? 8 : 0;
+    const dir = flipped ? -1 : 1;
+    // Body (vest over shirt)
+    ctx.fillStyle = flipped ? '#8B7355' : '#6B5A40'; ctx.fillRect(x - 8, y - 2 + dy, 16, 18);
+    ctx.fillStyle = flipped ? '#5A4A2A' : '#3A2A1A';
+    ctx.fillRect(x - 6, y - 2 + dy, 5, 15); ctx.fillRect(x + 1, y - 2 + dy, 5, 15);
+    // Head
+    ctx.fillStyle = '#D4A574'; ctx.beginPath(); ctx.arc(x, y - 12 + dy, 9, 0, Math.PI * 2); ctx.fill();
+    // Hat
+    ctx.fillStyle = flipped ? '#4A3020' : '#2C1810';
+    ctx.fillRect(x - 11, y - 18 + dy, 22, 3); ctx.fillRect(x - 8, y - 26 + dy, 16, 9);
+    // Eyes
+    ctx.fillStyle = '#222';
+    ctx.beginPath(); ctx.arc(x - 3, y - 13 + dy, 1.3, 0, Math.PI * 2);
+    ctx.arc(x + 3, y - 13 + dy, 1.3, 0, Math.PI * 2); ctx.fill();
+    // Cards in hand
+    if (!c.scared) {
+      ctx.save();
+      ctx.fillStyle = '#F5F0E0';
+      ctx.translate(x + dir * 14, y + 2 + dy); ctx.rotate(dir * -0.2);
+      ctx.fillRect(-4, -8, 8, 11);
+      ctx.strokeStyle = '#888'; ctx.lineWidth = 0.5; ctx.strokeRect(-4, -8, 8, 11);
+      ctx.fillStyle = '#CC0000'; ctx.font = '6px serif'; ctx.textAlign = 'center';
+      ctx.fillText('\u2660', 0, 0);
+      ctx.restore();
+      ctx.save();
+      ctx.fillStyle = '#F5F0E0';
+      ctx.translate(x + dir * 18, y - 1 + dy); ctx.rotate(dir * 0.15);
+      ctx.fillRect(-4, -8, 8, 11);
+      ctx.strokeStyle = '#888'; ctx.lineWidth = 0.5; ctx.strokeRect(-4, -8, 8, 11);
+      ctx.fillStyle = '#CC0000'; ctx.font = '6px serif'; ctx.textAlign = 'center';
+      ctx.fillText('\u2665', 0, 0);
+      ctx.restore();
+      // Arm holding cards
+      ctx.strokeStyle = '#D4A574'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(x + dir * 8, y + 2 + dy); ctx.lineTo(x + dir * 14, y + 2 + dy); ctx.stroke();
+    }
+  }
+
+  // ── Drinker — cowboy at the bar sipping a beer ──
+  drawDrinker(ctx, c) {
+    const x = c.x, y = c.y, dy = c.scared > 0 ? 6 : 0;
+    // Body (flannel)
+    ctx.fillStyle = '#8B4513'; ctx.fillRect(x - 9, y - 2 + dy, 18, 20);
+    ctx.fillStyle = '#6B3410'; ctx.fillRect(x - 9, y + 6 + dy, 18, 14);
+    // Head
+    ctx.fillStyle = '#D4A070'; ctx.beginPath(); ctx.arc(x, y - 13 + dy, 10, 0, Math.PI * 2); ctx.fill();
+    // Stubble
+    ctx.fillStyle = 'rgba(60,40,20,0.2)';
+    ctx.beginPath(); ctx.arc(x, y - 8 + dy, 7, 0, Math.PI); ctx.fill();
+    // Hat
+    ctx.fillStyle = '#5A4030';
+    ctx.beginPath(); ctx.ellipse(x, y - 18 + dy, 15, 3.5, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(x - 9, y - 28 + dy, 18, 11);
+    ctx.fillStyle = '#3A2820'; ctx.fillRect(x - 9, y - 19 + dy, 18, 2);
+    // Eyes
+    ctx.fillStyle = '#333';
+    ctx.beginPath(); ctx.arc(x - 3, y - 14 + dy, 1.5, 0, Math.PI * 2);
+    ctx.arc(x + 3, y - 14 + dy, 1.5, 0, Math.PI * 2); ctx.fill();
+    if (!c.scared) {
+      // Arm holding beer
+      ctx.strokeStyle = '#D4A070'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(x + 9, y + 2 + dy); ctx.lineTo(x + 20, y - 6 + dy); ctx.stroke();
+      // Beer mug
+      ctx.fillStyle = 'rgba(200,180,100,0.75)'; ctx.fillRect(x + 16, y - 16 + dy, 9, 13);
+      ctx.fillStyle = 'rgba(255,255,200,0.5)'; ctx.fillRect(x + 17, y - 14 + dy, 3, 8);
+      ctx.fillStyle = '#FFFDE0';
+      ctx.beginPath(); ctx.ellipse(x + 20.5, y - 16 + dy, 5, 2, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(160,140,80,0.6)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(x + 25, y - 10 + dy, 4, -Math.PI * 0.5, Math.PI * 0.5); ctx.stroke();
+    } else {
+      // Scared hands up
+      ctx.strokeStyle = '#D4A070'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(x - 9, y + dy); ctx.lineTo(x - 16, y - 14 + dy); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x + 9, y + dy); ctx.lineTo(x + 16, y - 14 + dy); ctx.stroke();
+    }
+  }
+
+  // ── Door Civilian — innocent bystander entering the saloon ──
+  drawDoorCiv(ctx, c) {
+    if (!c.alive) return;
+    const x = c.x, y = c.y, dy = c.scared > 0 ? 8 : 0;
+    const mode = c.spawnMode || 'door';
+    ctx.save();
+    // Apply alpha for window/balcony fade
+    if (c.drawAlpha !== undefined && c.drawAlpha < 1) ctx.globalAlpha = c.drawAlpha;
+
+    if (mode === 'window' || mode === 'balcony') {
+      // Upper-body only (peeking from window or leaning on balcony)
+      this._drawDoorCivHead(ctx, c, x, y, dy);
+    } else {
+      // Door mode — full body with walking
+      const walking = c.civState === 'entering' || c.civState === 'leaving';
+      const legOff = walking ? ((c.walkFrame || 0) ? 4 : -4) : 0;
+      if (walking) {
+        ctx.fillStyle = 'rgba(0,0,0,0.15)';
+        ctx.beginPath(); ctx.ellipse(x, y + 18, 12, 4, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      this._drawDoorCivBody(ctx, c, x, y, dy, walking, legOff);
+    }
+    ctx.restore();
+  }
+
+  // Head + upper torso drawing for window/balcony civs
+  _drawDoorCivHead(ctx, c, x, y, dy) {
+    if (c.subtype === 'cowgirl') {
+      ctx.fillStyle = '#8B3A60'; ctx.fillRect(x - 8, y - 12 + dy, 16, 10);
+      ctx.fillStyle = '#E0B890'; ctx.beginPath(); ctx.arc(x, y - 22 + dy, 9, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#8B5A2B';
+      ctx.beginPath(); ctx.arc(x, y - 24 + dy, 10, Math.PI + 0.3, -0.3); ctx.fill();
+      ctx.fillRect(x - 10, y - 22 + dy, 4, 16); ctx.fillRect(x + 6, y - 22 + dy, 4, 16);
+      ctx.fillStyle = '#A06848';
+      ctx.beginPath(); ctx.arc(x, y - 28 + dy, 7, Math.PI, 0); ctx.fill();
+      ctx.fillStyle = '#3A6A3A';
+      ctx.beginPath(); ctx.arc(x - 3, y - 23 + dy, 1.5, 0, Math.PI * 2);
+      ctx.arc(x + 3, y - 23 + dy, 1.5, 0, Math.PI * 2); ctx.fill();
+    } else if (c.subtype === 'oldman') {
+      ctx.fillStyle = '#5A5A4A'; ctx.fillRect(x - 9, y - 6 + dy, 18, 12);
+      ctx.fillStyle = '#D4A574'; ctx.beginPath(); ctx.arc(x, y - 16 + dy, 9, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#C8C0B0'; ctx.fillRect(x - 10, y - 18 + dy, 4, 8); ctx.fillRect(x + 6, y - 18 + dy, 4, 8);
+      ctx.strokeStyle = '#8B8B6B'; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.arc(x - 3, y - 17 + dy, 3, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x + 3, y - 17 + dy, 3, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = '#444';
+      ctx.beginPath(); ctx.arc(x - 3, y - 17 + dy, 1, 0, Math.PI * 2);
+      ctx.arc(x + 3, y - 17 + dy, 1, 0, Math.PI * 2); ctx.fill();
+    } else {
+      ctx.fillStyle = '#6A7A8A'; ctx.fillRect(x - 9, y - 4 + dy, 18, 10);
+      ctx.fillStyle = '#D4A574'; ctx.beginPath(); ctx.arc(x, y - 14 + dy, 9, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#2A2A2A';
+      ctx.beginPath(); ctx.ellipse(x, y - 20 + dy, 12, 3, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x, y - 26 + dy, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#333';
+      ctx.beginPath(); ctx.arc(x - 3, y - 15 + dy, 1.3, 0, Math.PI * 2);
+      ctx.arc(x + 3, y - 15 + dy, 1.3, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // Full body drawing for door-walking civs
+  _drawDoorCivBody(ctx, c, x, y, dy, walking, legOff) {
+    if (c.subtype === 'cowgirl') {
+      ctx.fillStyle = '#6A2848';
+      ctx.beginPath(); ctx.moveTo(x - 10, y - 4 + dy); ctx.lineTo(x + 10, y - 4 + dy);
+      ctx.lineTo(x + 14, y + 18); ctx.lineTo(x - 14, y + 18); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#8B3A60'; ctx.fillRect(x - 8, y - 12 + dy, 16, 10);
+      ctx.fillStyle = '#E0B890'; ctx.beginPath(); ctx.arc(x, y - 22 + dy, 9, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#8B5A2B';
+      ctx.beginPath(); ctx.arc(x, y - 24 + dy, 10, Math.PI + 0.3, -0.3); ctx.fill();
+      ctx.fillRect(x - 10, y - 22 + dy, 4, 16); ctx.fillRect(x + 6, y - 22 + dy, 4, 16);
+      ctx.fillStyle = '#A06848';
+      ctx.beginPath(); ctx.arc(x, y - 28 + dy, 7, Math.PI, 0); ctx.fill();
+      ctx.fillStyle = '#3A6A3A';
+      ctx.beginPath(); ctx.arc(x - 3, y - 23 + dy, 1.5, 0, Math.PI * 2);
+      ctx.arc(x + 3, y - 23 + dy, 1.5, 0, Math.PI * 2); ctx.fill();
+      if (walking) {
+        ctx.fillStyle = '#4A1828';
+        ctx.fillRect(x - 4 + legOff, y + 14, 4, 8); ctx.fillRect(x - legOff, y + 14, 4, 8);
+      }
+    } else if (c.subtype === 'oldman') {
+      ctx.fillStyle = '#5A5A4A'; ctx.fillRect(x - 9, y - 6 + dy, 18, 22);
+      ctx.fillStyle = '#C8B898'; ctx.fillRect(x - 4, y - 6 + dy, 8, 18);
+      ctx.fillStyle = '#D4A574'; ctx.beginPath(); ctx.arc(x, y - 16 + dy, 9, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#C8C0B0'; ctx.fillRect(x - 10, y - 18 + dy, 4, 8); ctx.fillRect(x + 6, y - 18 + dy, 4, 8);
+      ctx.strokeStyle = '#8B8B6B'; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.arc(x - 3, y - 17 + dy, 3, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x + 3, y - 17 + dy, 3, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = '#444';
+      ctx.beginPath(); ctx.arc(x - 3, y - 17 + dy, 1, 0, Math.PI * 2);
+      ctx.arc(x + 3, y - 17 + dy, 1, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#5A3A1E'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x + 12, y - 2 + dy); ctx.lineTo(x + 14, y + 20); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x + 11, y - 4 + dy, 3, Math.PI, 0); ctx.stroke();
+      if (walking) {
+        ctx.fillStyle = '#3A3A2A';
+        ctx.fillRect(x - 5 + legOff, y + 14, 5, 8); ctx.fillRect(x - legOff, y + 14, 5, 8);
+      }
+    } else {
+      ctx.fillStyle = '#6A7A8A'; ctx.fillRect(x - 9, y - 4 + dy, 18, 20);
+      ctx.fillStyle = '#3A3A3A'; ctx.fillRect(x - 5, y - 4 + dy, 2, 18); ctx.fillRect(x + 3, y - 4 + dy, 2, 18);
+      ctx.fillStyle = '#D4A574'; ctx.beginPath(); ctx.arc(x, y - 14 + dy, 9, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#2A2A2A';
+      ctx.beginPath(); ctx.ellipse(x, y - 20 + dy, 12, 3, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x, y - 26 + dy, 8, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#333';
+      ctx.beginPath(); ctx.arc(x - 3, y - 15 + dy, 1.3, 0, Math.PI * 2);
+      ctx.arc(x + 3, y - 15 + dy, 1.3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#3A2A1A';
+      ctx.beginPath(); ctx.ellipse(x, y - 10 + dy, 5, 2, 0, 0, Math.PI); ctx.fill();
+      if (walking) {
+        ctx.fillStyle = '#4A4A3A';
+        ctx.fillRect(x - 5 + legOff, y + 14, 5, 8); ctx.fillRect(x - legOff, y + 14, 5, 8);
       }
     }
+  }
 
-    // Warning "!" indicator
-    if (e.state === 'warning') {
-      const pulse = 0.55 + Math.abs(Math.sin(this.time * 14.3)) * 0.45;
-      ctx.save();
-      ctx.globalAlpha = pulse;
-      ctx.font = 'bold 24px Georgia, serif';
-      ctx.fillStyle = '#FFD700';
-      ctx.textAlign = 'center';
-      ctx.fillText('!', x, y - 64);
-      ctx.restore();
+  // ── FPS Revolver — realistic steel & walnut ───────────────────────────────
+  drawFPSGun(ctx) {
+    if (this.state !== 'playing' && this.state !== 'paused') return;
+    const panX = (this.smoothAimX - 0.5) * GUN_PAN_X;
+    const panY = (this.smoothAimY - 0.5) * GUN_PAN_Y;
+    const recoil = this.recoilT > 0 ? Math.sin((1 - this.recoilT / RECOIL_DUR) * Math.PI) * RECOIL_KICK : 0;
+    ctx.save();
+    ctx.translate(GUN_ANCHOR_X + panX, GUN_ANCHOR_Y + panY - recoil);
+    const tilt = (this.smoothAimX - 0.5) * -0.08;
+    ctx.rotate(tilt);
+
+    // Hand
+    const hg = ctx.createLinearGradient(-15, 30, 25, 120);
+    hg.addColorStop(0, '#D4A070'); hg.addColorStop(1, '#C08050');
+    ctx.fillStyle = hg;
+    ctx.beginPath(); ctx.moveTo(-22, 80); ctx.quadraticCurveTo(-28, 50, -20, 20);
+    ctx.lineTo(24, 16); ctx.quadraticCurveTo(32, 50, 26, 80);
+    ctx.lineTo(26, 140); ctx.lineTo(-22, 140); ctx.closePath(); ctx.fill();
+
+    // Cuff
+    ctx.fillStyle = '#C8B898'; ctx.fillRect(-24, 72, 52, 14);
+    ctx.fillStyle = '#B0A080'; ctx.fillRect(-24, 72, 52, 2); ctx.fillRect(-24, 84, 52, 2);
+    // Sleeve
+    const sg = ctx.createLinearGradient(0, 86, 0, 145);
+    sg.addColorStop(0, '#5A3A1E'); sg.addColorStop(1, '#3D2410');
+    ctx.fillStyle = sg; ctx.fillRect(-26, 86, 56, 60);
+    // Thumb
+    ctx.fillStyle = '#D4A070';
+    ctx.beginPath(); ctx.ellipse(22, 8, 10, 5, -0.6, 0, Math.PI * 2); ctx.fill();
+    // Fingers
+    ctx.fillStyle = '#C8946A';
+    for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.ellipse(0, 26 + i * 8, 20, 5, 0, 0, Math.PI); ctx.fill(); }
+    ctx.strokeStyle = 'rgba(100,60,30,0.3)'; ctx.lineWidth = 0.7;
+    for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.moveTo(-18, 24 + i * 8); ctx.quadraticCurveTo(0, 26 + i * 8, 18, 24 + i * 8); ctx.stroke(); }
+
+    // ── Gun ──
+    // Grip (walnut)
+    const gg = ctx.createLinearGradient(-10, 10, 12, 68);
+    gg.addColorStop(0, '#7A4420'); gg.addColorStop(0.4, '#9B5E30'); gg.addColorStop(1, '#5A3010');
+    ctx.fillStyle = gg;
+    ctx.beginPath(); ctx.moveTo(-8, 10); ctx.lineTo(12, 8);
+    ctx.quadraticCurveTo(16, 35, 14, 65); ctx.quadraticCurveTo(4, 72, -10, 62);
+    ctx.quadraticCurveTo(-14, 35, -8, 10); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(40,20,5,0.15)'; ctx.lineWidth = 0.5;
+    for (let i = 0; i < 8; i++) { const y = 16 + i * 6; ctx.beginPath(); ctx.moveTo(-6, y); ctx.lineTo(12, y + 1); ctx.stroke(); }
+    ctx.beginPath(); ctx.arc(2, 38, 5, 0, Math.PI * 2);
+    const mg = ctx.createRadialGradient(1, 37, 0.5, 2, 38, 5);
+    mg.addColorStop(0, '#E8C860'); mg.addColorStop(1, '#8A7020');
+    ctx.fillStyle = mg; ctx.fill();
+
+    // Frame (dark steel)
+    const fg = ctx.createLinearGradient(-12, -50, -12, 12);
+    fg.addColorStop(0, '#B0B0B0'); fg.addColorStop(0.3, '#8A8A8A');
+    fg.addColorStop(0.7, '#606060'); fg.addColorStop(1, '#404040');
+    ctx.fillStyle = fg;
+    ctx.beginPath(); ctx.moveTo(-12, -40); ctx.lineTo(18, -42);
+    ctx.lineTo(20, 10); ctx.lineTo(-8, 12); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(220,220,220,0.22)'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(-10, -38); ctx.lineTo(16, -40); ctx.stroke();
+
+    // Cylinder
+    const cylX = 4, cylY = -15, cylR = 16;
+    ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.arc(cylX + 1, cylY + 1, cylR, 0, Math.PI * 2); ctx.fill();
+    const cg = ctx.createRadialGradient(cylX - 3, cylY - 3, 1, cylX, cylY, cylR);
+    cg.addColorStop(0, '#A0A0A0'); cg.addColorStop(0.4, '#707070'); cg.addColorStop(1, '#2A2A2A');
+    ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(cylX, cylY, cylR, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(160,160,160,0.3)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cylX, cylY, cylR, 0, Math.PI * 2); ctx.stroke();
+
+    const ca = this.time * 0.35;
+    ctx.strokeStyle = 'rgba(20,20,20,0.3)'; ctx.lineWidth = 1.5;
+    for (let i = 0; i < 6; i++) {
+      const fa = (i / 6) * Math.PI * 2 + ca + Math.PI / 6;
+      ctx.beginPath(); ctx.moveTo(cylX + Math.cos(fa) * 5, cylY + Math.sin(fa) * 5);
+      ctx.lineTo(cylX + Math.cos(fa) * (cylR - 1), cylY + Math.sin(fa) * (cylR - 1)); ctx.stroke();
     }
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + ca;
+      const bx = cylX + Math.cos(a) * 9.5, by = cylY + Math.sin(a) * 9.5;
+      ctx.beginPath(); ctx.arc(bx, by, 3.5, 0, Math.PI * 2);
+      if (i < this.bullets) {
+        const bg = ctx.createRadialGradient(bx, by, 0.5, bx, by, 3.5);
+        bg.addColorStop(0, '#E8C860'); bg.addColorStop(1, '#8A7020'); ctx.fillStyle = bg;
+      } else ctx.fillStyle = '#0A0A0A';
+      ctx.fill();
+    }
+    ctx.fillStyle = '#808080'; ctx.beginPath(); ctx.arc(cylX, cylY, 2.5, 0, Math.PI * 2); ctx.fill();
+
+    // Barrel (shorter, wider, dark steel)
+    const bg2 = ctx.createLinearGradient(-8, -45, 16, -45);
+    bg2.addColorStop(0, '#A0A0A0'); bg2.addColorStop(0.3, '#707070');
+    bg2.addColorStop(0.7, '#484848'); bg2.addColorStop(1, '#252525');
+    ctx.fillStyle = bg2; ctx.fillRect(-8, -105, 24, 65);
+    ctx.fillStyle = 'rgba(200,200,200,0.12)'; ctx.fillRect(-8, -105, 24, 3);
+    ctx.strokeStyle = 'rgba(140,140,140,0.2)'; ctx.lineWidth = 0.6;
+    ctx.beginPath(); ctx.moveTo(-2, -105); ctx.lineTo(-2, -42); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(12, -105); ctx.lineTo(12, -42); ctx.stroke();
+    // Ejector rod
+    ctx.fillStyle = '#484848'; ctx.fillRect(16, -95, 5, 50);
+    // Front sight
+    ctx.fillStyle = '#D0D0D0'; ctx.fillRect(1, -112, 6, 7);
+    // Muzzle
+    ctx.fillStyle = '#505050'; ctx.beginPath(); ctx.arc(4, -107, 11, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#080808'; ctx.beginPath(); ctx.arc(4, -107, 6, 0, Math.PI * 2); ctx.fill();
+
+    // Trigger guard (brass)
+    ctx.strokeStyle = '#C8A030'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(-6, 10);
+    ctx.quadraticCurveTo(-10, 28, -2, 34);
+    ctx.quadraticCurveTo(8, 28, 6, 10); ctx.stroke();
+    ctx.strokeStyle = '#707070'; ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.moveTo(0, 8); ctx.lineTo(-2, 24); ctx.stroke();
+
+    // Hammer
+    ctx.fillStyle = '#808080';
+    ctx.beginPath(); ctx.moveTo(12, -40); ctx.lineTo(14, -54);
+    ctx.quadraticCurveTo(20, -56, 21, -48); ctx.lineTo(18, -38); ctx.closePath(); ctx.fill();
 
     ctx.restore();
   }
 
-  // ── Player OTS Gun (Over-the-shoulder Colt Peacemaker) ─────────────────────
-  drawPlayerGun(ctx) {
-    if (this.state !== 'playing') return;
-
-    // Pivot: bottom-right corner, partly off-screen
-    const pivotX = W - 5;
-    const pivotY = H + 15;
-
-    // Aim angle from pivot toward crosshair
-    const dx = this.aimX - pivotX;
-    const dy = this.aimY - pivotY;
-    let angle = Math.atan2(dy, dx);
-    angle = clamp(angle, GUN_MIN_ANGLE, GUN_MAX_ANGLE);
-
-    // Recoil: smooth sin-curve kick
-    const recoilFrac = this.recoilT > 0
-      ? Math.sin((1 - this.recoilT / RECOIL_DURATION) * Math.PI)
-      : 0;
-    const recoilOff  = recoilFrac * RECOIL_MAX_DIST;
-    const recoilKick = recoilFrac * RECOIL_MAX_ANGLE;
-
-    const armLen    = GUN_ARM_LEN;
-    const barrelLen = GUN_BARREL_LEN;
-    const totalLen  = armLen + barrelLen - recoilOff;
-
-    const effAngle = angle - recoilKick;
-    this.muzzleX = pivotX + Math.cos(effAngle) * totalLen;
-    this.muzzleY = pivotY + Math.sin(effAngle) * totalLen;
-
+  // ── Fixed black crosshair (clean "+") ─────────────────────────────────────
+  drawCrosshair(ctx) {
+    const x = this.crossX, y = this.crossY;
     ctx.save();
-    ctx.translate(pivotX, pivotY);
-    ctx.rotate(effAngle);
-
-    const ro = recoilOff; // shorthand
-
-    // ── Leather duster coat sleeve ──
-    const slvGrad = ctx.createLinearGradient(0, -22, 0, 22);
-    slvGrad.addColorStop(0,    '#3D2410');
-    slvGrad.addColorStop(0.20, '#5A3A1E');
-    slvGrad.addColorStop(0.50, '#6B4828');
-    slvGrad.addColorStop(0.80, '#4A3018');
-    slvGrad.addColorStop(1,    '#2A1808');
-    ctx.fillStyle = slvGrad;
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    const gap = 5, arm = 14;
     ctx.beginPath();
-    ctx.moveTo(-ro - 30, -18);
-    ctx.quadraticCurveTo(armLen * 0.3 - ro, -20, armLen - ro + 8, -14);
-    ctx.lineTo(armLen - ro + 10,  16);
-    ctx.quadraticCurveTo(armLen * 0.3 - ro, 18, -ro - 30, 17);
-    ctx.closePath();
-    ctx.fill();
-
-    // Sleeve leather stitching (double row)
-    ctx.save();
-    ctx.strokeStyle = 'rgba(180,140,80,0.30)';
-    ctx.lineWidth = 0.8;
-    ctx.setLineDash([3, 4]);
-    ctx.beginPath();
-    ctx.moveTo(-ro + 10, -16);
-    ctx.quadraticCurveTo(armLen * 0.5 - ro, -19, armLen - ro + 6, -12);
+    ctx.moveTo(x - arm, y); ctx.lineTo(x - gap, y);
+    ctx.moveTo(x + gap, y); ctx.lineTo(x + arm, y);
+    ctx.moveTo(x, y - arm); ctx.lineTo(x, y - gap);
+    ctx.moveTo(x, y + gap); ctx.lineTo(x, y + arm);
     ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(-ro + 10, 15);
-    ctx.quadraticCurveTo(armLen * 0.5 - ro, 17, armLen - ro + 8, 14);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
-
-    // Sleeve wrinkle folds (3 fabric creases)
-    ctx.save();
-    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
-    ctx.lineWidth = 1.2;
-    for (let w = 0; w < 3; w++) {
-      const wx = armLen * (0.2 + w * 0.22) - ro;
-      ctx.beginPath();
-      ctx.moveTo(wx, -15);
-      ctx.quadraticCurveTo(wx + 3, 0, wx - 1, 14);
-      ctx.stroke();
-    }
-    ctx.restore();
-
-    // Sleeve cuff (folded leather edge)
-    const cuffX = armLen - ro + 2;
-    const cuffGrad = ctx.createLinearGradient(cuffX - 12, 0, cuffX + 4, 0);
-    cuffGrad.addColorStop(0, '#5A3A1E');
-    cuffGrad.addColorStop(1, '#3A2210');
-    ctx.fillStyle = cuffGrad;
-    ctx.beginPath();
-    ctx.moveTo(cuffX - 12, -14);
-    ctx.lineTo(cuffX + 4,  -12);
-    ctx.lineTo(cuffX + 6,   14);
-    ctx.lineTo(cuffX - 12,  15);
-    ctx.closePath();
-    ctx.fill();
-
-    // ── Leather glove hand ──
-    const handX = armLen - ro + 6;
-    // Wrist
-    const wristGrad = ctx.createRadialGradient(handX - 2, 1, 2, handX, 1, 16);
-    wristGrad.addColorStop(0, '#8B6538');
-    wristGrad.addColorStop(1, '#5A3E20');
-    ctx.fillStyle = wristGrad;
-    ctx.beginPath();
-    ctx.ellipse(handX - 2, 1, 14, 12, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Palm/fingers gripping
-    const palmGrad = ctx.createLinearGradient(handX, -10, handX, 12);
-    palmGrad.addColorStop(0, '#7A5530');
-    palmGrad.addColorStop(0.5, '#96703E');
-    palmGrad.addColorStop(1, '#6B4828');
-    ctx.fillStyle = palmGrad;
-    ctx.beginPath();
-    ctx.ellipse(handX + 6, 2, 12, 10, 0.15, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Finger segments wrapping grip
-    ctx.strokeStyle = 'rgba(60,35,10,0.5)';
-    ctx.lineWidth = 0.8;
-    for (let f = 0; f < 4; f++) {
-      const fy = -5 + f * 4.5;
-      ctx.beginPath();
-      ctx.moveTo(handX - 2, fy);
-      ctx.quadraticCurveTo(handX + 10, fy + 1.5, handX + 16, fy);
-      ctx.stroke();
-    }
-
-    // Thumb (on top of grip)
-    ctx.fillStyle = '#8B6538';
-    ctx.beginPath();
-    ctx.ellipse(handX + 12, -8, 8, 4.5, -0.3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(60,35,10,0.4)';
-    ctx.lineWidth = 0.6;
-    ctx.beginPath();
-    ctx.arc(handX + 16, -8, 3, 0, Math.PI);
-    ctx.stroke();
-
-    // Glove stitching detail on hand
-    ctx.strokeStyle = 'rgba(200,170,110,0.25)';
-    ctx.lineWidth = 0.6;
-    ctx.setLineDash([2, 3]);
-    ctx.beginPath();
-    ctx.ellipse(handX + 4, 2, 14, 12, 0.15, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // ── Colt Peacemaker Revolver ──
-    const g = armLen - ro; // gun-origin x in local space
-
-    // --- Grip (walnut burl wood with medallion) ---
-    ctx.save();
-    const gripGrad = ctx.createLinearGradient(g - 2, 4, g + 20, 38);
-    gripGrad.addColorStop(0,    '#7A4420');
-    gripGrad.addColorStop(0.25, '#9B5E30');
-    gripGrad.addColorStop(0.50, '#6B3818');
-    gripGrad.addColorStop(0.75, '#8B5028');
-    gripGrad.addColorStop(1,    '#4A2810');
-    ctx.fillStyle = gripGrad;
-    ctx.beginPath();
-    ctx.moveTo(g + 2,   4);
-    ctx.lineTo(g + 20,  6);
-    ctx.quadraticCurveTo(g + 22, 20, g + 18, 38);
-    ctx.quadraticCurveTo(g + 10, 42, g - 2,  36);
-    ctx.quadraticCurveTo(g - 4,  20, g + 2,   4);
-    ctx.closePath();
-    ctx.fill();
-
-    // Wood grain pattern
-    ctx.strokeStyle = 'rgba(40,18,5,0.22)';
-    ctx.lineWidth = 0.7;
-    for (let wi = 0; wi < 7; wi++) {
-      const gy = 8 + wi * 4.2;
-      ctx.beginPath();
-      ctx.moveTo(g + 1, gy);
-      ctx.quadraticCurveTo(g + 10, gy + (wi % 2 === 0 ? 2 : -1.5), g + 19, gy + 1);
-      ctx.stroke();
-    }
-
-    // Checkering pattern (cross-hatch on lower grip)
-    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-    ctx.lineWidth = 0.5;
-    for (let ci = 0; ci < 8; ci++) {
-      ctx.beginPath();
-      ctx.moveTo(g + 3 + ci * 2, 16);
-      ctx.lineTo(g + 1 + ci * 2, 34);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(g + 3, 16 + ci * 2.4);
-      ctx.lineTo(g + 19, 17 + ci * 2.4);
-      ctx.stroke();
-    }
-
-    // Grip medallion (brass Colt emblem circle)
-    const medX = g + 10, medY = 22;
-    ctx.beginPath();
-    ctx.arc(medX, medY, 5.5, 0, Math.PI * 2);
-    const medGrad = ctx.createRadialGradient(medX - 1, medY - 1, 0.5, medX, medY, 5.5);
-    medGrad.addColorStop(0,   '#E8C860');
-    medGrad.addColorStop(0.6, '#C8A030');
-    medGrad.addColorStop(1,   '#8A7020');
-    ctx.fillStyle = medGrad;
-    ctx.fill();
-    ctx.strokeStyle = '#6A5010';
-    ctx.lineWidth = 0.8;
-    ctx.stroke();
-    // Star inside medallion
-    ctx.strokeStyle = '#9A7828';
-    ctx.lineWidth = 0.6;
-    for (let si = 0; si < 5; si++) {
-      const sa = (si / 5) * Math.PI * 2 - Math.PI / 2;
-      const sa2 = ((si + 2) / 5) * Math.PI * 2 - Math.PI / 2;
-      ctx.beginPath();
-      ctx.moveTo(medX + Math.cos(sa) * 3.5, medY + Math.sin(sa) * 3.5);
-      ctx.lineTo(medX + Math.cos(sa2) * 3.5, medY + Math.sin(sa2) * 3.5);
-      ctx.stroke();
-    }
-    ctx.restore();
-
-    // --- Grip frame (back-strap, blued steel) ---
-    const bsGrad = ctx.createLinearGradient(g - 4, 4, g + 2, 4);
-    bsGrad.addColorStop(0, '#1A2A40');
-    bsGrad.addColorStop(0.5, '#2A3A55');
-    bsGrad.addColorStop(1, '#182838');
-    ctx.fillStyle = bsGrad;
-    ctx.beginPath();
-    ctx.moveTo(g - 2, 4);
-    ctx.lineTo(g + 3, 4);
-    ctx.quadraticCurveTo(g + 1, 20, g - 1, 36);
-    ctx.quadraticCurveTo(g - 5, 20, g - 2, 4);
-    ctx.closePath();
-    ctx.fill();
-
-    // --- Main frame (case-hardened steel with colour mottling) ---
-    const frmGrad = ctx.createLinearGradient(g - 6, -18, g - 6, 10);
-    frmGrad.addColorStop(0,    '#A8B0C0');
-    frmGrad.addColorStop(0.15, '#8090A8');
-    frmGrad.addColorStop(0.35, '#7888A0');
-    frmGrad.addColorStop(0.55, '#6878A0');
-    frmGrad.addColorStop(0.80, '#5060A0');
-    frmGrad.addColorStop(1,    '#384880');
-    ctx.fillStyle = frmGrad;
-    ctx.beginPath();
-    ctx.moveTo(g - 6,  -14);
-    ctx.lineTo(g + 26, -16);
-    ctx.lineTo(g + 28,   8);
-    ctx.lineTo(g + 2,    8);
-    ctx.lineTo(g - 4,    6);
-    ctx.closePath();
-    ctx.fill();
-
-    // Case-hardening colour swirl (semi-transparent overlay)
-    ctx.save();
-    ctx.globalAlpha = 0.12;
-    ctx.fillStyle = '#6040C0';
-    ctx.beginPath();
-    ctx.ellipse(g + 8, -4, 12, 8, 0.2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#C08040';
-    ctx.beginPath();
-    ctx.ellipse(g + 18, -8, 8, 5, -0.3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // Frame edge highlight (specular)
-    ctx.strokeStyle = 'rgba(200,210,230,0.35)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(g - 5, -13);
-    ctx.lineTo(g + 25, -15);
-    ctx.stroke();
-
-    // Engraving scroll on frame
-    ctx.save();
-    ctx.strokeStyle = 'rgba(180,190,210,0.25)';
-    ctx.lineWidth = 0.6;
-    // Scroll pattern
-    ctx.beginPath();
-    ctx.moveTo(g + 2, -6);
-    ctx.bezierCurveTo(g + 6, -10, g + 10, -2, g + 14, -8);
-    ctx.bezierCurveTo(g + 18, -12, g + 22, -4, g + 24, -10);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(g + 4, 2);
-    ctx.bezierCurveTo(g + 8, -2, g + 12, 4, g + 16, 0);
-    ctx.bezierCurveTo(g + 20, -3, g + 23, 2, g + 26, -1);
-    ctx.stroke();
-    ctx.restore();
-
-    // --- Cylinder (rotating drum, blued finish) ---
-    const cylX = g + 12, cylY = -3;
-    const cylR = 15;
-    // Cylinder shadow behind
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.beginPath();
-    ctx.ellipse(cylX + 1, cylY + 2, cylR + 1, cylR + 1, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Main cylinder body
-    const cylGrad = ctx.createRadialGradient(cylX - 3, cylY - 3, 1, cylX, cylY, cylR);
-    cylGrad.addColorStop(0,   '#7888A8');
-    cylGrad.addColorStop(0.3, '#5868A0');
-    cylGrad.addColorStop(0.7, '#384878');
-    cylGrad.addColorStop(1,   '#1A2840');
-    ctx.fillStyle = cylGrad;
-    ctx.beginPath();
-    ctx.arc(cylX, cylY, cylR, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Cylinder rim edge
-    ctx.strokeStyle = 'rgba(120,140,180,0.5)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(cylX, cylY, cylR, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Cylinder flutes (machined grooves between chambers)
-    const cylAngle = this.time * CYLINDER_ROT_SPEED;
-    ctx.save();
-    ctx.strokeStyle = 'rgba(10,15,30,0.35)';
-    ctx.lineWidth = 1.8;
-    for (let i = 0; i < 6; i++) {
-      const fa = (i / 6) * Math.PI * 2 + cylAngle + Math.PI / 6;
-      const fx1 = cylX + Math.cos(fa) * 6;
-      const fy1 = cylY + Math.sin(fa) * 6;
-      const fx2 = cylX + Math.cos(fa) * (cylR - 1);
-      const fy2 = cylY + Math.sin(fa) * (cylR - 1);
-      ctx.beginPath();
-      ctx.moveTo(fx1, fy1);
-      ctx.lineTo(fx2, fy2);
-      ctx.stroke();
-    }
-    ctx.restore();
-
-    // Six chambers (loaded = brass cartridge, spent = dark)
-    for (let i = 0; i < 6; i++) {
-      const ca  = (i / 6) * Math.PI * 2 + cylAngle;
-      const cbx = cylX + Math.cos(ca) * 9;
-      const cby = cylY + Math.sin(ca) * 9;
-
-      // Chamber hole
-      ctx.beginPath();
-      ctx.arc(cbx, cby, 3.5, 0, Math.PI * 2);
-      if (i < this.bullets) {
-        // Loaded: brass cartridge primer
-        const brassGrad = ctx.createRadialGradient(cbx - 0.5, cby - 0.5, 0.5, cbx, cby, 3.5);
-        brassGrad.addColorStop(0, '#E8C860');
-        brassGrad.addColorStop(0.6, '#C8A030');
-        brassGrad.addColorStop(1, '#8A7020');
-        ctx.fillStyle = brassGrad;
-        ctx.fill();
-        // Primer circle
-        ctx.beginPath();
-        ctx.arc(cbx, cby, 1.5, 0, Math.PI * 2);
-        ctx.fillStyle = '#AA7818';
-        ctx.fill();
-      } else {
-        // Spent: empty dark chamber
-        ctx.fillStyle = '#0A0A12';
-        ctx.fill();
-      }
-      ctx.strokeStyle = 'rgba(40,50,80,0.5)';
-      ctx.lineWidth = 0.6;
-      ctx.stroke();
-    }
-
-    // Cylinder pin (center axis)
-    ctx.fillStyle = '#6878A8';
-    ctx.beginPath();
-    ctx.arc(cylX, cylY, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(30,40,70,0.6)';
-    ctx.lineWidth = 0.5;
-    ctx.stroke();
-
-    // Specular highlight on cylinder
-    ctx.save();
-    ctx.globalAlpha = 0.18;
-    ctx.fillStyle = '#C0D0F0';
-    ctx.beginPath();
-    ctx.ellipse(cylX - 5, cylY - 6, 6, 3.5, -0.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // --- Barrel (octagonal profile, blued steel) ---
-    const barGrad = ctx.createLinearGradient(g + 24, -14, g + 24, 6);
-    barGrad.addColorStop(0,    '#8898B8');
-    barGrad.addColorStop(0.12, '#7080A8');
-    barGrad.addColorStop(0.30, '#5868A0');
-    barGrad.addColorStop(0.50, '#4858A0');
-    barGrad.addColorStop(0.70, '#384880');
-    barGrad.addColorStop(0.88, '#283868');
-    barGrad.addColorStop(1,    '#1A2848');
-    ctx.fillStyle = barGrad;
-    ctx.beginPath();
-    ctx.moveTo(g + 22, -12);
-    ctx.lineTo(g + barrelLen + 2,  -10);
-    ctx.lineTo(g + barrelLen + 2,    4);
-    ctx.lineTo(g + 22,               4);
-    ctx.closePath();
-    ctx.fill();
-
-    // Top flat of octagonal barrel (lighter face)
-    const topGrad = ctx.createLinearGradient(g + 24, -14, g + 24, -10);
-    topGrad.addColorStop(0, '#A0B0D0');
-    topGrad.addColorStop(1, '#8090B0');
-    ctx.fillStyle = topGrad;
-    ctx.fillRect(g + 24, -14, barrelLen - 20, 3.5);
-
-    // Barrel edge highlight
-    ctx.strokeStyle = 'rgba(160,180,220,0.3)';
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.moveTo(g + 24, -12);
-    ctx.lineTo(g + barrelLen + 2, -10);
-    ctx.stroke();
-
-    // Ejector rod housing (beneath barrel)
-    ctx.fillStyle = '#3A4A70';
-    ctx.beginPath();
-    ctx.moveTo(g + 26, 1);
-    ctx.lineTo(g + barrelLen - 4, 0);
-    ctx.lineTo(g + barrelLen - 4, 5);
-    ctx.lineTo(g + 26, 6);
-    ctx.closePath();
-    ctx.fill();
-    // Ejector rod tip
-    ctx.fillStyle = '#6878A0';
-    ctx.beginPath();
-    ctx.arc(g + barrelLen - 2, 3, 3, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Front sight blade (dove-tail style)
-    ctx.fillStyle = '#D0D8E8';
-    ctx.beginPath();
-    ctx.moveTo(g + barrelLen - 6, -18);
-    ctx.lineTo(g + barrelLen - 2, -18);
-    ctx.lineTo(g + barrelLen - 1, -12);
-    ctx.lineTo(g + barrelLen - 7, -12);
-    ctx.closePath();
-    ctx.fill();
-    // Sight notch
-    ctx.fillStyle = '#F8F0E0';
-    ctx.fillRect(g + barrelLen - 5, -20, 2, 3);
-
-    // Muzzle crown
-    const mzX = g + barrelLen + 2, mzY = -3;
-    // Outer ring
-    const mzGrad = ctx.createRadialGradient(mzX, mzY, 2, mzX, mzY, 8);
-    mzGrad.addColorStop(0,   '#5060A0');
-    mzGrad.addColorStop(0.5, '#384878');
-    mzGrad.addColorStop(1,   '#1A2840');
-    ctx.fillStyle = mzGrad;
-    ctx.beginPath();
-    ctx.arc(mzX, mzY, 8, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(120,140,180,0.4)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    // Inner bore
-    ctx.fillStyle = '#050508';
-    ctx.beginPath();
-    ctx.arc(mzX, mzY, 4, 0, Math.PI * 2);
-    ctx.fill();
-    // Rifling hint inside bore
-    ctx.strokeStyle = 'rgba(60,70,100,0.4)';
-    ctx.lineWidth = 0.4;
-    for (let ri = 0; ri < 6; ri++) {
-      const ra = (ri / 6) * Math.PI * 2;
-      ctx.beginPath();
-      ctx.moveTo(mzX + Math.cos(ra) * 1.5, mzY + Math.sin(ra) * 1.5);
-      ctx.lineTo(mzX + Math.cos(ra) * 3.8, mzY + Math.sin(ra) * 3.8);
-      ctx.stroke();
-    }
-
-    // --- Trigger guard (brass) ---
-    const tgGrad = ctx.createLinearGradient(g, 8, g + 12, 28);
-    tgGrad.addColorStop(0,   '#D8B848');
-    tgGrad.addColorStop(0.5, '#C8A030');
-    tgGrad.addColorStop(1,   '#A88020');
-    ctx.strokeStyle = tgGrad;
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.moveTo(g + 2, 8);
-    ctx.quadraticCurveTo(g - 2, 22, g + 6, 28);
-    ctx.quadraticCurveTo(g + 14, 22, g + 12, 8);
-    ctx.stroke();
-
-    // --- Trigger (blued steel) ---
-    ctx.strokeStyle = '#5868A0';
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.moveTo(g + 7,  6);
-    ctx.quadraticCurveTo(g + 5, 14, g + 4, 20);
-    ctx.stroke();
-
-    // --- Hammer (cocked back, case-hardened) ---
-    const hmGrad = ctx.createLinearGradient(g + 18, -18, g + 30, -28);
-    hmGrad.addColorStop(0, '#8090A8');
-    hmGrad.addColorStop(0.5, '#6878A0');
-    hmGrad.addColorStop(1, '#4A5888');
-    ctx.fillStyle = hmGrad;
-    ctx.beginPath();
-    ctx.moveTo(g + 20, -16);
-    ctx.lineTo(g + 24, -26);
-    ctx.quadraticCurveTo(g + 30, -28, g + 32, -22);
-    ctx.lineTo(g + 28, -14);
-    ctx.closePath();
-    ctx.fill();
-    // Hammer spur serrations
-    ctx.strokeStyle = 'rgba(40,50,80,0.5)';
-    ctx.lineWidth = 0.5;
-    for (let hs = 0; hs < 4; hs++) {
-      const hsx = g + 24 + hs * 2;
-      ctx.beginPath();
-      ctx.moveTo(hsx, -26);
-      ctx.lineTo(hsx + 0.5, -23);
-      ctx.stroke();
-    }
-    // Hammer specular
-    ctx.save();
-    ctx.globalAlpha = 0.15;
-    ctx.fillStyle = '#C0D0F0';
-    ctx.beginPath();
-    ctx.ellipse(g + 26, -22, 3, 1.5, -0.4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // --- Loading gate (right side of frame) ---
-    ctx.fillStyle = 'rgba(90,110,150,0.4)';
-    ctx.beginPath();
-    ctx.arc(g + 22, 2, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(50,60,90,0.5)';
-    ctx.lineWidth = 0.5;
-    ctx.stroke();
-
-    // --- Gun drop shadow (subtle depth) ---
-    ctx.save();
-    ctx.globalAlpha = 0.08;
-    ctx.fillStyle = '#000';
-    ctx.beginPath();
-    ctx.moveTo(g - 6, 10);
-    ctx.lineTo(g + barrelLen + 4, 8);
-    ctx.lineTo(g + barrelLen + 4, 12);
-    ctx.lineTo(g - 6, 14);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-
     ctx.restore();
   }
 
@@ -1507,168 +1805,191 @@ class WesternShooter {
     for (const p of this.particles) {
       ctx.save();
       if (p.type === 'blood') {
-        ctx.globalAlpha = clamp(p.t / 0.7, 0, 1);
-        ctx.fillStyle = '#8B0000';
-        ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, Math.PI * 2); ctx.fill();
-
+        ctx.globalAlpha = clamp(p.t / 0.6, 0, 1); ctx.fillStyle = '#8B0000';
+        ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2); ctx.fill();
+      } else if (p.type === 'glass') {
+        ctx.globalAlpha = clamp(p.t / 0.6, 0, 1);
+        ctx.fillStyle = p.color || '#88CCFF';
+        ctx.beginPath(); ctx.arc(p.x, p.y, rand(1.5, 3), 0, Math.PI * 2); ctx.fill();
+        // Glint
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.beginPath(); ctx.arc(p.x, p.y, 1, 0, Math.PI * 2); ctx.fill();
       } else if (p.type === 'hole') {
-        // Bullet hole decal
-        ctx.globalAlpha = clamp(p.t * 0.25, 0, 0.85);
-        ctx.fillStyle = '#111';
-        ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = '#333';
-        ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, Math.PI * 2); ctx.stroke();
-        // Cracks
-        for (let a = 0; a < 6; a++) {
-          const ang = (a / 6) * Math.PI * 2;
-          ctx.strokeStyle = '#222';
-          ctx.beginPath();
-          ctx.moveTo(p.x + Math.cos(ang) * 5, p.y + Math.sin(ang) * 5);
-          ctx.lineTo(p.x + Math.cos(ang) * 14, p.y + Math.sin(ang) * 14);
-          ctx.stroke();
+        ctx.globalAlpha = clamp(p.t * 0.22, 0, 0.8); ctx.fillStyle = '#111';
+        ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#333'; ctx.lineWidth = 0.8;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, Math.PI * 2); ctx.stroke();
+        for (let a = 0; a < 5; a++) {
+          const ang = (a / 5) * Math.PI * 2; ctx.strokeStyle = '#222';
+          ctx.beginPath(); ctx.moveTo(p.x + Math.cos(ang) * 4, p.y + Math.sin(ang) * 4);
+          ctx.lineTo(p.x + Math.cos(ang) * 12, p.y + Math.sin(ang) * 12); ctx.stroke();
         }
-
       } else if (p.type === 'hit') {
-        ctx.globalAlpha = clamp(p.t / 0.22, 0, 1);
-        ctx.fillStyle = '#FF5555';
-        ctx.beginPath(); ctx.arc(p.x, p.y, 14, 0, Math.PI * 2); ctx.fill();
-
-      } else if (p.type === 'flash') {
-        // Player muzzle flash — multi-layer cinematic flash
-        const ft = clamp(p.t / 0.14, 0, 1);
-        // Outer glow (warm orange)
-        ctx.globalAlpha = ft * 0.5;
-        const outerGlow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 44);
-        outerGlow.addColorStop(0,   'rgba(255,180,60,0.8)');
-        outerGlow.addColorStop(0.4, 'rgba(255,120,20,0.4)');
-        outerGlow.addColorStop(1,   'rgba(255,80,0,0)');
-        ctx.fillStyle = outerGlow;
-        ctx.beginPath(); ctx.arc(p.x, p.y, 44, 0, Math.PI * 2); ctx.fill();
-        // Mid flash (bright yellow)
-        ctx.globalAlpha = ft * 0.85;
-        const midFlash = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 24);
-        midFlash.addColorStop(0,   '#FFFFFF');
-        midFlash.addColorStop(0.3, '#FFF8D0');
-        midFlash.addColorStop(0.7, '#FFDD60');
-        midFlash.addColorStop(1,   'rgba(255,180,40,0)');
-        ctx.fillStyle = midFlash;
-        ctx.beginPath(); ctx.arc(p.x, p.y, 24, 0, Math.PI * 2); ctx.fill();
-        // Core (white-hot)
-        ctx.globalAlpha = ft;
-        ctx.fillStyle = '#FFFFFF';
-        ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI * 2); ctx.fill();
-        // Spark streaks (directional)
-        ctx.globalAlpha = ft * 0.6;
-        ctx.strokeStyle = '#FFE080';
-        ctx.lineWidth = 1.5;
-        for (let si = 0; si < 5; si++) {
-          const sa = (si / 5) * Math.PI * 2 + p.t * 8;
-          const sl = 12 + Math.sin(si * 3.7) * 10;
-          ctx.beginPath();
-          ctx.moveTo(p.x + Math.cos(sa) * 8, p.y + Math.sin(sa) * 8);
-          ctx.lineTo(p.x + Math.cos(sa) * sl, p.y + Math.sin(sa) * sl);
-          ctx.stroke();
-        }
-
-      } else if (p.type === 'eflash') {
-        // Enemy muzzle flash
-        ctx.globalAlpha = clamp(p.t / 0.14, 0, 0.85);
-        ctx.fillStyle = '#FFBB44';
+        ctx.globalAlpha = clamp(p.t / 0.2, 0, 1); ctx.fillStyle = '#FF5555';
         ctx.beginPath(); ctx.arc(p.x, p.y, 12, 0, Math.PI * 2); ctx.fill();
+      } else if (p.type === 'flash') {
+        const ft = clamp(p.t / 0.13, 0, 1); ctx.globalAlpha = ft * 0.45;
+        const og = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 36);
+        og.addColorStop(0, 'rgba(255,180,60,0.8)'); og.addColorStop(0.4, 'rgba(255,120,20,0.4)');
+        og.addColorStop(1, 'rgba(255,80,0,0)');
+        ctx.fillStyle = og; ctx.beginPath(); ctx.arc(p.x, p.y, 36, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = ft * 0.8; ctx.fillStyle = '#FFF';
+        ctx.beginPath(); ctx.arc(p.x, p.y, 8, 0, Math.PI * 2); ctx.fill();
+      } else if (p.type === 'eflash') {
+        ctx.globalAlpha = clamp(p.t / 0.13, 0, 0.8); ctx.fillStyle = '#FFBB44';
+        ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI * 2); ctx.fill();
       }
       ctx.restore();
     }
   }
 
-  // ── HUD ───────────────────────────────────────────────────────────────────
-  drawHUD(ctx) {
-    // Score (top-left)
+  // ── Developer Credit with bullet-hole torn poster effect ─────────────────
+  _drawCredit(ctx, baseY) {
     ctx.save();
-    ctx.font = 'bold 22px Georgia, serif';
-    ctx.textAlign  = 'left';
-    ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
-    ctx.strokeText(`SCORE: ${this.score}`, 12, 34);
-    ctx.fillStyle = '#FFD700';
-    ctx.fillText(`SCORE: ${this.score}`, 12, 34);
+    const cx = W / 2;
 
-    // Wave (top-right)
-    ctx.textAlign = 'right';
-    ctx.strokeText(`WAVE ${this.wave}`, W - 12, 34);
-    ctx.fillText(`WAVE ${this.wave}`, W - 12, 34);
+    // ── Torn poster/banner background ──
+    const bw = 260, bh = 52, bx = cx - bw / 2, by = baseY - 28;
+    // Parchment background with torn edges
+    ctx.fillStyle = '#D4B896';
+    ctx.beginPath();
+    ctx.moveTo(bx + 3, by);
+    ctx.lineTo(bx + bw - 5, by + 2);
+    ctx.lineTo(bx + bw - 2, by + bh - 3);
+    ctx.lineTo(bx + 5, by + bh);
+    ctx.closePath();
+    ctx.fill();
+    // Darker border/burnt edges
+    ctx.strokeStyle = '#8B6914'; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(bx + 3, by);  ctx.lineTo(bx + bw - 5, by + 2);
+    ctx.lineTo(bx + bw - 2, by + bh - 3); ctx.lineTo(bx + 5, by + bh);
+    ctx.closePath(); ctx.stroke();
+    // Aged stain patches
+    ctx.fillStyle = 'rgba(139,90,43,0.15)';
+    ctx.beginPath(); ctx.ellipse(cx - 40, baseY - 5, 30, 12, 0.2, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(101,67,33,0.12)';
+    ctx.beginPath(); ctx.ellipse(cx + 50, baseY + 2, 20, 10, -0.1, 0, Math.PI * 2); ctx.fill();
+
+    // ── Bullet hole on right side ──
+    const bhx = bx + bw - 28, bhy = baseY - 6;
+    // Torn paper rays around bullet hole
+    ctx.save();
+    ctx.translate(bhx, bhy);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + 0.3;
+      const len = 6 + Math.sin(i * 2.7) * 3;
+      ctx.fillStyle = 'rgba(60,30,10,0.25)';
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * 4, Math.sin(a) * 4);
+      ctx.lineTo(Math.cos(a - 0.15) * len, Math.sin(a - 0.15) * len);
+      ctx.lineTo(Math.cos(a + 0.15) * len, Math.sin(a + 0.15) * len);
+      ctx.closePath(); ctx.fill();
+    }
+    // Outer ring — scorched
+    ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2);
+    ctx.fillStyle = '#3A2510'; ctx.fill();
+    // Inner hole — dark
+    ctx.beginPath(); ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#0A0500'; ctx.fill();
+    // Rim highlight
+    ctx.beginPath(); ctx.arc(-1, -1, 5, Math.PI * 0.8, Math.PI * 1.6);
+    ctx.strokeStyle = 'rgba(180,140,80,0.35)'; ctx.lineWidth = 1; ctx.stroke();
     ctx.restore();
 
-    // Lives (hearts)
-    ctx.font = '26px serif';
-    ctx.textAlign = 'left';
-    for (let i = 0; i < MAX_LIVES; i++) {
-      ctx.fillText(i < this.lives ? '❤️' : '🖤', 12 + i * 32, 64);
-    }
+    // ── Text ──
+    ctx.textAlign = 'center';
+    // "Developed By Kendine Coder" in western style
+    ctx.font = 'bold 13px Georgia, serif';
+    ctx.fillStyle = '#3A1A00';
+    ctx.fillText('Developed By Kendine Coder', cx - 6, baseY - 6);
+    // URL
+    ctx.font = '11px Georgia, serif';
+    ctx.fillStyle = '#6B4226';
+    ctx.fillText('kendinecoder.com', cx - 6, baseY + 10);
 
-    // 6-shooter cylinder UI (bottom-right)
-    this.drawCylinder(ctx);
+    // Small decorative dashes on sides of text
+    ctx.strokeStyle = '#8B6914'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx - 110, baseY - 2); ctx.lineTo(cx - 80, baseY - 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx + 70, baseY - 2); ctx.lineTo(cx + 100, baseY - 2); ctx.stroke();
 
-    // Reload progress bar / prompt
+    ctx.restore();
+  }
+
+  // ── HUD (sleek, minimal) ──────────────────────────────────────────────────
+  drawHUD(ctx) {
+    ctx.save();
+    // Score
+    ctx.textAlign = 'left'; ctx.font = 'bold 20px Georgia, serif';
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillText(`${this.score}`, 13, 26);
+    ctx.fillStyle = '#FFD700'; ctx.fillText(`${this.score}`, 12, 25);
+    ctx.font = '12px Georgia, serif';
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillText(`BEST: ${this.bestScore}`, 13, 41);
+    ctx.fillStyle = '#C8A050'; ctx.fillText(`BEST: ${this.bestScore}`, 12, 40);
+    // Wave
+    ctx.textAlign = 'right'; ctx.font = 'bold 16px Georgia, serif';
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillText(`WAVE ${this.wave}`, W - 49, 24);
+    ctx.fillStyle = '#DEB887'; ctx.fillText(`WAVE ${this.wave}`, W - 50, 23);
+    // Pause
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    drawRR(ctx, W - 42, 8, 34, 24, 4); ctx.fill();
+    ctx.fillStyle = 'rgba(255,220,140,0.7)';
+    ctx.fillRect(W - 34, 13, 4, 14); ctx.fillRect(W - 24, 13, 4, 14);
+    ctx.restore();
+
+    // Hearts
+    for (let i = 0; i < MAX_LIVES; i++) this.drawHeart(ctx, 14 + i * 22, 52, i < this.lives);
+
+    // Ammo wheel
+    this.drawAmmoWheel(ctx);
+
+    // Reload
     if (this.reloading) {
       const prog = 1 - this.reloadTimer / RELOAD_TIME;
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      drawRoundRect(ctx, W / 2 - 90, H - 94, 180, 38, 8); ctx.fill();
-      ctx.fillStyle = '#8B4513';
-      drawRoundRect(ctx, W / 2 - 88, H - 92, (180 - 4) * prog, 34, 6); ctx.fill();
-      ctx.font = 'bold 16px Georgia, serif';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = '#FFD700';
-      ctx.fillText('RELOADING…', W / 2, H - 70);
+      const bw = 140, bh = 6, bx = W / 2 - bw / 2, by = H - 160;
+      ctx.fillStyle = 'rgba(0,0,0,0.4)'; drawRR(ctx, bx - 1, by - 1, bw + 2, bh + 2, 3); ctx.fill();
+      ctx.fillStyle = '#8B4513'; drawRR(ctx, bx, by, bw * prog, bh, 2); ctx.fill();
+      ctx.font = '12px Georgia, serif'; ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(255,215,0,0.8)'; ctx.fillText('RELOADING', W / 2, by - 5);
     } else if (this.bullets === 0) {
-      const pulse = 0.6 + Math.abs(Math.sin(this.time * 3.6)) * 0.4;
-      ctx.save();
-      ctx.globalAlpha = pulse;
-      ctx.fillStyle = '#FF3333';
-      ctx.font = 'bold 18px Georgia, serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('TAP TO RELOAD!', W / 2, H - 72);
+      const p = 0.6 + Math.abs(Math.sin(this.time * 3.6)) * 0.4;
+      ctx.save(); ctx.globalAlpha = p;
+      ctx.font = 'bold 14px Georgia, serif'; ctx.textAlign = 'center';
+      ctx.fillStyle = '#FF4444'; ctx.fillText('TAP TO RELOAD', W / 2, H - 158);
       ctx.restore();
     }
   }
 
-  drawCylinder(ctx) {
-    const cx = W - 68, cy = H - 62, R = 30;
+  drawHeart(ctx, x, y, filled) {
+    ctx.save(); ctx.translate(x, y);
+    ctx.beginPath(); ctx.moveTo(0, 3);
+    ctx.bezierCurveTo(-7, -4, -12, 0, -7, 6); ctx.lineTo(0, 12);
+    ctx.lineTo(7, 6); ctx.bezierCurveTo(12, 0, 7, -4, 0, 3); ctx.closePath();
+    ctx.fillStyle = filled ? '#CC2222' : 'rgba(60,20,20,0.5)'; ctx.fill();
+    if (filled) { ctx.fillStyle = 'rgba(255,100,100,0.3)'; ctx.beginPath(); ctx.arc(-3, 2, 3, 0, Math.PI * 2); ctx.fill(); }
+    ctx.restore();
+  }
 
-    // Outer ring
-    ctx.fillStyle = '#222';
-    ctx.beginPath(); ctx.arc(cx, cy, R + 7, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#555';
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(cx, cy, R + 7, 0, Math.PI * 2); ctx.stroke();
-
-    // 6 chambers
+  drawAmmoWheel(ctx) {
+    const cx = 48, cy = H - 52, R = 24;
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.arc(cx, cy, R + 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(30,30,30,0.6)'; ctx.beginPath(); ctx.arc(cx, cy, R + 2, 0, Math.PI * 2); ctx.fill();
     for (let i = 0; i < MAX_BULLETS; i++) {
-      const angle = (i / MAX_BULLETS) * Math.PI * 2 - Math.PI / 2;
-      const bx = cx + Math.cos(angle) * R;
-      const by = cy + Math.sin(angle) * R;
-      ctx.beginPath(); ctx.arc(bx, by, 9, 0, Math.PI * 2);
-      ctx.fillStyle = i < this.bullets ? '#FFD700' : '#2A2A2A';
-      ctx.fill();
-      ctx.strokeStyle = '#888'; ctx.lineWidth = 1;
-      ctx.stroke();
+      const a = (i / MAX_BULLETS) * Math.PI * 2 - Math.PI / 2;
+      const bx = cx + Math.cos(a) * R, by = cy + Math.sin(a) * R;
+      ctx.beginPath(); ctx.arc(bx, by, 7, 0, Math.PI * 2);
+      if (i < this.bullets) {
+        const bg = ctx.createRadialGradient(bx - 1, by - 1, 0.5, bx, by, 7);
+        bg.addColorStop(0, '#FFE880'); bg.addColorStop(1, '#C8A030'); ctx.fillStyle = bg;
+      } else ctx.fillStyle = '#1A1A1A';
+      ctx.fill(); ctx.strokeStyle = 'rgba(120,120,120,0.3)'; ctx.lineWidth = 0.6; ctx.stroke();
     }
-    // Centre pin
-    ctx.fillStyle = '#999';
-    ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI * 2); ctx.fill();
-
-    // Bullet count
-    ctx.font = 'bold 13px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#FFD700';
-    ctx.fillText(`${this.bullets}/6`, cx, cy + 50);
-
-    // RELOAD button
-    const btnFill = this.bullets === MAX_BULLETS ? '#444' : '#8B0000';
-    ctx.fillStyle = btnFill;
-    drawRoundRect(ctx, cx - 34, cy + 56, 68, 28, 6); ctx.fill();
-    ctx.fillStyle = '#FFD700';
-    ctx.font = 'bold 12px Georgia, serif';
-    ctx.fillText('RELOAD', cx, cy + 74);
+    ctx.fillStyle = '#666'; ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.font = '11px Georgia, serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255,215,0,0.65)'; ctx.fillText(`${this.bullets}/${MAX_BULLETS}`, cx, cy + R + 16);
+    if (this.bullets < MAX_BULLETS && !this.reloading && this.bullets > 0) {
+      ctx.font = '9px Georgia, serif'; ctx.fillStyle = 'rgba(200,160,80,0.5)'; ctx.fillText('TAP', cx, cy + R + 27);
+    }
   }
 }
 
