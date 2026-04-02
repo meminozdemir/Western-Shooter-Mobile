@@ -1,10 +1,10 @@
 {
-  "name": "western-shooter",
-  "short_name": "WesternShooter",
-  "description": "A mobile Western Shooter gallery game — 6-shooter, bar door, hidden outlaws.",
+  "name": "offline-shooter",
+  "short_name": "OfflineShooter",
+  "description": "A mobile Offline Shooter gallery game — 6-shooter, bar door, hidden outlaws.",
   "start_url": "/",
   "display": "fullscreen",
-  "orientation": "portrait",
+  "orientation": "landscape",
   "background_color": "#1A0800",
   "theme_color": "#3D1F00",
   "icons": [

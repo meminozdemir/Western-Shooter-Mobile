@@ -1,7 +1,7 @@
 {
   "appId": "com.westernshooter.mobile",
   "appName": "Western Shooter",
-  "webDir": ".",
+  "webDir": "www",
   "server": {
     "androidScheme": "https"
   },
