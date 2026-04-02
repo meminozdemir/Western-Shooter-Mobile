@@ -174,47 +174,99 @@ class AudioManager {
     if (!this.musicPlaying || !this.initialized) return;
     const ctx = this.ctx;
     const now = ctx.currentTime + 0.1;
-    const bpm = 138;
+    // Lively western saloon ragtime piano
+    const bpm = 160;
     const bt = 60 / bpm;
     const bar = bt * 4;
     const n = {
-      C3:130.81, D3:146.83, E3:164.81, F3:174.61, G3:196.00, A3:220.00, B3:246.94,
-      C4:261.63, D4:293.66, E4:329.63, F4:349.23, G4:392.00, A4:440.00, B4:493.88,
-      C5:523.25, D5:587.33, E5:659.25, G5:783.99,
+      C2:65.41, E2:82.41, G2:98.00, A2:110.00, B2:123.47,
+      C3:130.81, D3:146.83, E3:164.81, F3:174.61, Fs3:185.00,
+      G3:196.00, Gs3:207.65, A3:220.00, Bb3:233.08, B3:246.94,
+      C4:261.63, Cs4:277.18, D4:293.66, Ds4:311.13, E4:329.63,
+      F4:349.23, Fs4:369.99, G4:392.00, Gs4:415.30, A4:440.00,
+      Bb4:466.16, B4:493.88, C5:523.25, D5:587.33, E5:659.25,
+      F5:698.46, G5:783.99,
     };
+    const s = bt * 0.42; // staccato duration for bouncy feel
+    const m = bt * 0.7;  // medium hold
+    const l = bt * 1.2;  // longer hold
     const notes = [
-      [n.C3,0,bt*.7,.14,'triangle'],[n.E4,bt*.5,bt*.28,.07,'triangle'],
-      [n.G3,bt,bt*.28,.09,'triangle'],[n.E4,bt*1.5,bt*.28,.07,'triangle'],
-      [n.C3,bt*2,bt*.7,.14,'triangle'],[n.G4,bt*2.5,bt*.28,.07,'triangle'],
-      [n.G3,bt*3,bt*.28,.09,'triangle'],[n.E4,bt*3.5,bt*.28,.07,'triangle'],
-      [n.C3,bar,bt*.7,.14,'triangle'],[n.C4,bar+bt*.5,bt*.28,.07,'triangle'],
-      [n.G3,bar+bt,bt*.28,.09,'triangle'],[n.D4,bar+bt*1.5,bt*.28,.07,'triangle'],
-      [n.C3,bar+bt*2,bt*.7,.14,'triangle'],[n.E4,bar+bt*2.5,bt*.28,.07,'triangle'],
-      [n.G3,bar+bt*3,bt*.28,.09,'triangle'],[n.G4,bar+bt*3.5,bt*.3,.07,'triangle'],
-      [n.F3,bar*2,bt*.7,.14,'triangle'],[n.A4,bar*2+bt*.5,bt*.28,.07,'triangle'],
-      [n.A3,bar*2+bt,bt*.28,.09,'triangle'],[n.F4,bar*2+bt*1.5,bt*.28,.07,'triangle'],
-      [n.F3,bar*2+bt*2,bt*.7,.14,'triangle'],[n.A4,bar*2+bt*2.5,bt*.28,.07,'triangle'],
-      [n.A3,bar*2+bt*3,bt*.28,.09,'triangle'],[n.F4,bar*2+bt*3.5,bt*.28,.07,'triangle'],
-      [n.G3,bar*3,bt*.7,.14,'triangle'],[n.B4,bar*3+bt*.5,bt*.28,.07,'triangle'],
-      [n.D3,bar*3+bt,bt*.28,.09,'triangle'],[n.D4,bar*3+bt*1.5,bt*.28,.07,'triangle'],
-      [n.G3,bar*3+bt*2,bt*.7,.14,'triangle'],[n.F4,bar*3+bt*2.5,bt*.28,.07,'triangle'],
-      [n.D3,bar*3+bt*3,bt*.28,.09,'triangle'],[n.B3,bar*3+bt*3.5,bt*.28,.07,'triangle'],
-      [n.C3,bar*4,bt*.7,.14,'triangle'],[n.G4,bar*4+bt*.5,bt*.28,.07,'triangle'],
-      [n.G3,bar*4+bt,bt*.28,.09,'triangle'],[n.E5,bar*4+bt*1.5,bt*.28,.06,'triangle'],
-      [n.C3,bar*4+bt*2,bt*.7,.14,'triangle'],[n.C5,bar*4+bt*2.5,bt*.28,.06,'triangle'],
-      [n.G3,bar*4+bt*3,bt*.28,.09,'triangle'],[n.G4,bar*4+bt*3.5,bt*.28,.07,'triangle'],
-      [n.A3,bar*5,bt*.7,.13,'triangle'],[n.E4,bar*5+bt*.5,bt*.28,.07,'triangle'],
-      [n.E3,bar*5+bt,bt*.28,.09,'triangle'],[n.A4,bar*5+bt*1.5,bt*.28,.07,'triangle'],
-      [n.A3,bar*5+bt*2,bt*.7,.13,'triangle'],[n.E4,bar*5+bt*2.5,bt*.28,.07,'triangle'],
-      [n.E3,bar*5+bt*3,bt*.28,.09,'triangle'],[n.C4,bar*5+bt*3.5,bt*.28,.07,'triangle'],
-      [n.G3,bar*6,bt*.7,.14,'triangle'],[n.B4,bar*6+bt*.5,bt*.28,.07,'triangle'],
-      [n.D3,bar*6+bt,bt*.28,.09,'triangle'],[n.D5,bar*6+bt*1.5,bt*.28,.06,'triangle'],
-      [n.G3,bar*6+bt*2,bt*.7,.14,'triangle'],[n.F4,bar*6+bt*2.5,bt*.28,.07,'triangle'],
-      [n.D3,bar*6+bt*3,bt*.28,.09,'triangle'],[n.B3,bar*6+bt*3.5,bt*.28,.07,'triangle'],
-      [n.C3,bar*7,bt*.7,.14,'triangle'],[n.E4,bar*7+bt*.5,bt*.28,.07,'triangle'],
-      [n.G3,bar*7+bt,bt*.28,.09,'triangle'],[n.C4,bar*7+bt*1.5,bt*.28,.07,'triangle'],
-      [n.C3,bar*7+bt*2,bt*1.4,.14,'triangle'],[n.E4,bar*7+bt*2,bt*.5,.06,'triangle'],
-      [n.G4,bar*7+bt*2,bt*.5,.05,'triangle'],
+      // ── Bar 1: C major stride (oom-pah oom-pah) + melody ──
+      [n.C2,0,s,.16,'triangle'],[n.E4,0,s,.08,'triangle'],[n.G4,0,s,.08,'triangle'],
+      [n.E3,bt,s,.10,'triangle'],[n.G3,bt,s,.10,'triangle'],[n.C4,bt,s,.08,'triangle'],
+      [n.C2,bt*2,s,.16,'triangle'],[n.E4,bt*2,s,.08,'triangle'],[n.G4,bt*2,s,.08,'triangle'],
+      [n.E3,bt*3,s,.10,'triangle'],[n.G3,bt*3,s,.10,'triangle'],[n.C4,bt*3,s,.08,'triangle'],
+      // Melody over bar 1
+      [n.C5,0,m,.11,'triangle'],[n.D5,bt,s,.09,'triangle'],
+      [n.E5,bt*2,m,.11,'triangle'],[n.G5,bt*3,s,.09,'triangle'],
+
+      // ── Bar 2: G7 stride + melody run ──
+      [n.G2,bar,s,.16,'triangle'],[n.D4,bar,s,.08,'triangle'],[n.B3,bar,s,.08,'triangle'],
+      [n.D3,bar+bt,s,.10,'triangle'],[n.G3,bar+bt,s,.10,'triangle'],[n.B3,bar+bt,s,.08,'triangle'],
+      [n.G2,bar+bt*2,s,.16,'triangle'],[n.D4,bar+bt*2,s,.08,'triangle'],[n.F4,bar+bt*2,s,.07,'triangle'],
+      [n.D3,bar+bt*3,s,.10,'triangle'],[n.G3,bar+bt*3,s,.10,'triangle'],[n.B3,bar+bt*3,s,.08,'triangle'],
+      // Melody
+      [n.F5,bar,s,.09,'triangle'],[n.E5,bar+bt,s,.09,'triangle'],
+      [n.D5,bar+bt*2,m,.11,'triangle'],[n.B4,bar+bt*3,s,.09,'triangle'],
+
+      // ── Bar 3: F major stride + honky-tonk lick ──
+      [n.C2,bar*2,s,.16,'triangle'],[n.F4,bar*2,s,.08,'triangle'],[n.A3,bar*2,s,.08,'triangle'],
+      [n.F3,bar*2+bt,s,.10,'triangle'],[n.A3,bar*2+bt,s,.10,'triangle'],[n.C4,bar*2+bt,s,.08,'triangle'],
+      [n.C2,bar*2+bt*2,s,.16,'triangle'],[n.F4,bar*2+bt*2,s,.08,'triangle'],[n.A3,bar*2+bt*2,s,.08,'triangle'],
+      [n.F3,bar*2+bt*3,s,.10,'triangle'],[n.A3,bar*2+bt*3,s,.10,'triangle'],[n.C4,bar*2+bt*3,s,.08,'triangle'],
+      // Melody — ascending run
+      [n.C5,bar*2,s,.10,'triangle'],[n.D5,bar*2+bt*.5,s,.08,'triangle'],
+      [n.E5,bar*2+bt,s,.10,'triangle'],[n.F5,bar*2+bt*1.5,s,.08,'triangle'],
+      [n.G5,bar*2+bt*2,m,.11,'triangle'],[n.E5,bar*2+bt*3,s,.09,'triangle'],
+
+      // ── Bar 4: C-G7 turnaround ──
+      [n.C2,bar*3,s,.16,'triangle'],[n.E4,bar*3,s,.08,'triangle'],[n.G4,bar*3,s,.08,'triangle'],
+      [n.E3,bar*3+bt,s,.10,'triangle'],[n.G3,bar*3+bt,s,.10,'triangle'],
+      [n.G2,bar*3+bt*2,s,.16,'triangle'],[n.D4,bar*3+bt*2,s,.08,'triangle'],[n.F4,bar*3+bt*2,s,.07,'triangle'],
+      [n.D3,bar*3+bt*3,s,.10,'triangle'],[n.G3,bar*3+bt*3,s,.10,'triangle'],[n.B3,bar*3+bt*3,s,.08,'triangle'],
+      // Melody — descending lick
+      [n.E5,bar*3,s,.10,'triangle'],[n.D5,bar*3+bt,s,.09,'triangle'],
+      [n.C5,bar*3+bt*2,s,.10,'triangle'],[n.B4,bar*3+bt*2.5,s,.07,'triangle'],
+      [n.A4,bar*3+bt*3,s,.09,'triangle'],[n.G4,bar*3+bt*3.5,s,.07,'triangle'],
+
+      // ── Bar 5: Am stride + bluesy melody ──
+      [n.A2,bar*4,s,.16,'triangle'],[n.E4,bar*4,s,.08,'triangle'],[n.C4,bar*4,s,.08,'triangle'],
+      [n.E3,bar*4+bt,s,.10,'triangle'],[n.A3,bar*4+bt,s,.10,'triangle'],[n.C4,bar*4+bt,s,.08,'triangle'],
+      [n.A2,bar*4+bt*2,s,.16,'triangle'],[n.E4,bar*4+bt*2,s,.08,'triangle'],[n.C4,bar*4+bt*2,s,.08,'triangle'],
+      [n.E3,bar*4+bt*3,s,.10,'triangle'],[n.A3,bar*4+bt*3,s,.10,'triangle'],
+      // Melody
+      [n.A4,bar*4,m,.11,'triangle'],[n.C5,bar*4+bt,s,.09,'triangle'],
+      [n.E5,bar*4+bt*2,m,.11,'triangle'],[n.D5,bar*4+bt*3,s,.09,'triangle'],
+
+      // ── Bar 6: D7→G stride + chromatic run ──
+      [n.A2,bar*5,s,.16,'triangle'],[n.D4,bar*5,s,.08,'triangle'],[n.Fs3,bar*5,s,.08,'triangle'],
+      [n.D3,bar*5+bt,s,.10,'triangle'],[n.Fs3,bar*5+bt,s,.10,'triangle'],[n.A3,bar*5+bt,s,.08,'triangle'],
+      [n.G2,bar*5+bt*2,s,.16,'triangle'],[n.D4,bar*5+bt*2,s,.08,'triangle'],[n.B3,bar*5+bt*2,s,.08,'triangle'],
+      [n.D3,bar*5+bt*3,s,.10,'triangle'],[n.G3,bar*5+bt*3,s,.10,'triangle'],[n.B3,bar*5+bt*3,s,.08,'triangle'],
+      // Melody — chromatic descent
+      [n.D5,bar*5,s,.09,'triangle'],[n.Cs4,bar*5+bt*.5,s,.07,'triangle'],
+      [n.D5,bar*5+bt,s,.10,'triangle'],[n.C5,bar*5+bt*1.5,s,.07,'triangle'],
+      [n.B4,bar*5+bt*2,m,.11,'triangle'],[n.A4,bar*5+bt*3,s,.09,'triangle'],
+
+      // ── Bar 7: F major stride + high trill ──
+      [n.C2,bar*6,s,.16,'triangle'],[n.F4,bar*6,s,.08,'triangle'],[n.A3,bar*6,s,.08,'triangle'],
+      [n.F3,bar*6+bt,s,.10,'triangle'],[n.A3,bar*6+bt,s,.10,'triangle'],[n.C4,bar*6+bt,s,.08,'triangle'],
+      [n.C2,bar*6+bt*2,s,.16,'triangle'],[n.E4,bar*6+bt*2,s,.08,'triangle'],[n.G3,bar*6+bt*2,s,.08,'triangle'],
+      [n.E3,bar*6+bt*3,s,.10,'triangle'],[n.G3,bar*6+bt*3,s,.10,'triangle'],[n.C4,bar*6+bt*3,s,.08,'triangle'],
+      // Melody
+      [n.F5,bar*6,s,.09,'triangle'],[n.E5,bar*6+bt*.5,s,.07,'triangle'],
+      [n.F5,bar*6+bt,s,.09,'triangle'],[n.G5,bar*6+bt*1.5,s,.07,'triangle'],
+      [n.E5,bar*6+bt*2,m,.11,'triangle'],[n.C5,bar*6+bt*3,s,.09,'triangle'],
+
+      // ── Bar 8: C→G7→C ending flourish ──
+      [n.C2,bar*7,s,.16,'triangle'],[n.E4,bar*7,s,.08,'triangle'],[n.G4,bar*7,s,.08,'triangle'],
+      [n.E3,bar*7+bt,s,.10,'triangle'],[n.G3,bar*7+bt,s,.10,'triangle'],[n.C4,bar*7+bt,s,.08,'triangle'],
+      [n.G2,bar*7+bt*2,s,.16,'triangle'],[n.D4,bar*7+bt*2,s,.08,'triangle'],[n.B3,bar*7+bt*2,s,.07,'triangle'],
+      [n.C2,bar*7+bt*3,s,.16,'triangle'],[n.E4,bar*7+bt*3,s,.08,'triangle'],[n.G4,bar*7+bt*3,l,.08,'triangle'],
+      // Melody — final descending flourish
+      [n.G5,bar*7,s,.10,'triangle'],[n.E5,bar*7+bt*.5,s,.08,'triangle'],
+      [n.D5,bar*7+bt,s,.09,'triangle'],[n.C5,bar*7+bt*1.5,s,.07,'triangle'],
+      [n.B4,bar*7+bt*2,s,.09,'triangle'],[n.C5,bar*7+bt*3,l,.12,'triangle'],
     ];
     for (const p of notes) this.playNote(p[0], now + p[1], p[2], p[3], p[4]);
     const loopLen = bar * 8;
@@ -265,6 +317,45 @@ class AudioManager {
     src.start(now); src.stop(now + 0.2);
   }
 
+  playChandelierCrash() {
+    if (!this.initialized) return;
+    const ctx = this.ctx, now = ctx.currentTime;
+    // Heavy metal impact
+    const osc1 = ctx.createOscillator(); osc1.type = 'triangle';
+    osc1.frequency.setValueAtTime(280, now);
+    osc1.frequency.exponentialRampToValueAtTime(60, now + 0.25);
+    const g1 = ctx.createGain();
+    g1.gain.setValueAtTime(0.3, now);
+    g1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    osc1.connect(g1); g1.connect(ctx.destination);
+    osc1.start(now); osc1.stop(now + 0.36);
+    // Glass/crystal shattering
+    const bufSz = Math.floor(ctx.sampleRate * 0.5);
+    const buf = ctx.createBuffer(1, bufSz, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < bufSz; i++) {
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufSz, 2) *
+             (1 + 0.7 * Math.sin(i * 0.06));
+    }
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const flt = ctx.createBiquadFilter(); flt.type = 'highpass';
+    flt.frequency.setValueAtTime(2500, now + 0.05);
+    const g2 = ctx.createGain();
+    g2.gain.setValueAtTime(0.25, now + 0.05);
+    g2.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+    src.connect(flt); flt.connect(g2); g2.connect(ctx.destination);
+    src.start(now + 0.05); src.stop(now + 0.5);
+    // Metallic ringing overtone (chandelier chain vibration)
+    const ring = ctx.createOscillator(); ring.type = 'sine';
+    ring.frequency.setValueAtTime(1800, now + 0.1);
+    ring.frequency.exponentialRampToValueAtTime(600, now + 0.6);
+    const rg = ctx.createGain();
+    rg.gain.setValueAtTime(0.06, now + 0.1);
+    rg.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+    ring.connect(rg); rg.connect(ctx.destination);
+    ring.start(now + 0.1); ring.stop(now + 0.66);
+  }
+
   playDoorCreak() {
     if (!this.initialized) return;
     const ctx = this.ctx, now = ctx.currentTime;
@@ -310,6 +401,92 @@ class AudioManager {
     g2.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
     osc.connect(g2); g2.connect(ctx.destination);
     osc.start(now); osc.stop(now + 0.26);
+  }
+
+  playReload() {
+    if (!this.initialized) return;
+    const ctx = this.ctx, now = ctx.currentTime;
+    // Cylinder open — latch click + creak
+    const latch = ctx.createOscillator(); latch.type = 'square';
+    latch.frequency.setValueAtTime(2200, now);
+    latch.frequency.exponentialRampToValueAtTime(800, now + 0.03);
+    const lg = ctx.createGain();
+    lg.gain.setValueAtTime(0.14, now);
+    lg.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+    latch.connect(lg); lg.connect(ctx.destination);
+    latch.start(now); latch.stop(now + 0.06);
+    // Cylinder swing open — low metallic creak
+    const creak = ctx.createOscillator(); creak.type = 'sawtooth';
+    creak.frequency.setValueAtTime(120, now + 0.04);
+    creak.frequency.linearRampToValueAtTime(260, now + 0.12);
+    creak.frequency.linearRampToValueAtTime(80, now + 0.2);
+    const cf = ctx.createBiquadFilter(); cf.type = 'bandpass';
+    cf.frequency.value = 200; cf.Q.value = 6;
+    const ckg = ctx.createGain();
+    ckg.gain.setValueAtTime(0.06, now + 0.04);
+    ckg.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+    creak.connect(cf); cf.connect(ckg); ckg.connect(ctx.destination);
+    creak.start(now + 0.04); creak.stop(now + 0.24);
+    // 6 individual bullet insertions — each is a metallic "click-thunk"
+    const bulletStart = 0.28;
+    const spacing = 0.22; // ~1.32s for all 6
+    for (let i = 0; i < 6; i++) {
+      const t = now + bulletStart + i * spacing;
+      // Bullet slide-in — high metallic scrape
+      const slide = ctx.createOscillator(); slide.type = 'square';
+      slide.frequency.setValueAtTime(3200 + i * 150, t);
+      slide.frequency.exponentialRampToValueAtTime(1200, t + 0.025);
+      const slg = ctx.createGain();
+      slg.gain.setValueAtTime(0.06, t);
+      slg.gain.exponentialRampToValueAtTime(0.001, t + 0.035);
+      slide.connect(slg); slg.connect(ctx.destination);
+      slide.start(t); slide.stop(t + 0.04);
+      // Bullet seat — thunk (low click when bullet seats in chamber)
+      const seat = ctx.createOscillator(); seat.type = 'triangle';
+      seat.frequency.setValueAtTime(600 + i * 40, t + 0.03);
+      seat.frequency.exponentialRampToValueAtTime(180, t + 0.07);
+      const sg = ctx.createGain();
+      sg.gain.setValueAtTime(0.12, t + 0.03);
+      sg.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+      seat.connect(sg); sg.connect(ctx.destination);
+      seat.start(t + 0.03); seat.stop(t + 0.10);
+      // Tiny metallic ring after each insertion
+      const ring = ctx.createOscillator(); ring.type = 'sine';
+      ring.frequency.setValueAtTime(4800 + i * 200, t + 0.04);
+      const rg = ctx.createGain();
+      rg.gain.setValueAtTime(0.03, t + 0.04);
+      rg.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+      ring.connect(rg); rg.connect(ctx.destination);
+      ring.start(t + 0.04); ring.stop(t + 0.11);
+    }
+    // Cylinder snap shut — heavy double click
+    const snapT = now + bulletStart + 6 * spacing + 0.08;
+    const snap1 = ctx.createOscillator(); snap1.type = 'square';
+    snap1.frequency.setValueAtTime(1400, snapT);
+    snap1.frequency.exponentialRampToValueAtTime(300, snapT + 0.04);
+    const s1g = ctx.createGain();
+    s1g.gain.setValueAtTime(0.16, snapT);
+    s1g.gain.exponentialRampToValueAtTime(0.001, snapT + 0.06);
+    snap1.connect(s1g); s1g.connect(ctx.destination);
+    snap1.start(snapT); snap1.stop(snapT + 0.07);
+    // Heavy thud on close
+    const thud = ctx.createOscillator(); thud.type = 'sine';
+    thud.frequency.setValueAtTime(220, snapT + 0.01);
+    thud.frequency.exponentialRampToValueAtTime(55, snapT + 0.09);
+    const tg = ctx.createGain();
+    tg.gain.setValueAtTime(0.13, snapT + 0.01);
+    tg.gain.exponentialRampToValueAtTime(0.001, snapT + 0.12);
+    thud.connect(tg); tg.connect(ctx.destination);
+    thud.start(snapT + 0.01); thud.stop(snapT + 0.13);
+    // Cylinder lock click
+    const lock = ctx.createOscillator(); lock.type = 'square';
+    lock.frequency.setValueAtTime(3500, snapT + 0.06);
+    lock.frequency.exponentialRampToValueAtTime(1500, snapT + 0.08);
+    const lkg = ctx.createGain();
+    lkg.gain.setValueAtTime(0.08, snapT + 0.06);
+    lkg.gain.exponentialRampToValueAtTime(0.001, snapT + 0.1);
+    lock.connect(lkg); lkg.connect(ctx.destination);
+    lock.start(snapT + 0.06); lock.stop(snapT + 0.11);
   }
 }
 
@@ -361,6 +538,9 @@ class WesternShooter {
     // Bottles (interactive)
     this.bottles = [];
     this._initBottles();
+    this.chandelierAlive = true;
+    this.chandelierRespawn = 0;
+    this.bottleRespawnTimer = 0;
 
     this.aimX = 0.5; this.aimY = 0.4;
     this.smoothAimX = 0.5; this.smoothAimY = 0.4;
@@ -395,11 +575,15 @@ class WesternShooter {
   }
 
   resize() {
+    const dpr = window.devicePixelRatio || 1;
     const cw = window.innerWidth, ch = window.innerHeight;
     this.scale = Math.min(cw / W, ch / H);
     this.ox = (cw - W * this.scale) / 2;
     this.oy = (ch - H * this.scale) / 2;
-    this.canvas.width = cw; this.canvas.height = ch;
+    this.canvas.width = cw * dpr; this.canvas.height = ch * dpr;
+    this.canvas.style.width = cw + 'px';
+    this.canvas.style.height = ch + 'px';
+    this.dpr = dpr;
   }
   toGame(cx, cy) {
     return { x: (cx - this.ox) / this.scale, y: (cy - this.oy) / this.scale };
@@ -437,10 +621,12 @@ class WesternShooter {
     }
     if (this.state === 'gameover') {
       if (inRect(x, y, W / 2 - 100, H * 0.68, 200, 54)) this.startGame();
+      if (inRect(x, y, W / 2 - 80, H * 0.78, 160, 46)) this.exitGame();
       return;
     }
     if (this.state === 'paused') {
       if (inRect(x, y, W / 2 - 90, H / 2 + 15, 180, 50)) { this.state = 'playing'; this.audio.startMusic(); }
+      if (inRect(x, y, W / 2 - 80, H / 2 + 81, 160, 46)) this.exitGame();
       return;
     }
     if (this.state !== 'playing') return;
@@ -460,10 +646,18 @@ class WesternShooter {
     this.hitFlash = 0; this.civFlash = 0; this.waveBanner = 0; this.recoilT = 0;
     this.door = new DoorPhysics();
     this._initBottles();
+    this.chandelierAlive = true;
+    this.chandelierRespawn = 0;
+    this.bottleRespawnTimer = 0;
     this.civSpawnTimer = 0;
     this.nextCivDelay = 14;
     this.initCivilians();
     this.audio.init(); this.audio.resume(); this.audio.startMusic();
+  }
+
+  exitGame() {
+    this.audio.stopMusic();
+    this.state = 'intro';
   }
 
   initCivilians() {
@@ -480,6 +674,7 @@ class WesternShooter {
   triggerReload() {
     if (this.reloading || this.bullets === MAX_BULLETS) return;
     this.reloading = true; this.reloadTimer = RELOAD_TIME;
+    this.audio.playReload();
   }
 
   fireAt(x, y) {
@@ -517,6 +712,7 @@ class WesternShooter {
         if (!b.alive) continue;
         if (inRect(x, y, b.x - 2, b.y - 7, 14, 27)) {
           b.alive = false;
+          b.respawnTimer = 15 + rand(0, 10);
           this.audio.playGlassShatter();
           // Glass debris particles
           for (let i = 0; i < 8; i++) {
@@ -531,6 +727,35 @@ class WesternShooter {
           hit = true;
           break;
         }
+      }
+    }
+
+    // Check chandelier
+    if (!hit && this.chandelierAlive) {
+      const chCx = W / 2, chCy = 36;
+      if (inRect(x, y, chCx - 22, chCy - 16, 44, 32)) {
+        this.chandelierAlive = false;
+        this.chandelierRespawn = 20 + rand(0, 10);
+        this.audio.playChandelierCrash();
+        // Metal & glass debris
+        for (let i = 0; i < 14; i++) {
+          this.particles.push({
+            type: 'glass', x: chCx + rand(-18, 18), y: chCy + rand(-8, 8),
+            vx: rand(-4, 4), vy: rand(-2, 3), t: rand(0.5, 1.2),
+            color: i % 2 ? '#DAA520' : '#FF8C00',
+          });
+        }
+        // Sparks
+        for (let i = 0; i < 6; i++) {
+          this.particles.push({
+            type: 'glass', x: chCx + rand(-10, 10), y: chCy,
+            vx: rand(-2, 2), vy: rand(-5, -2), t: rand(0.3, 0.6),
+            color: '#FFE080',
+          });
+        }
+        this.alerts.push({ text: '+20', x: chCx, y: chCy - 18, t: 1.0, color: '#FFD700' });
+        this.score += 20;
+        hit = true;
       }
     }
 
@@ -782,6 +1007,18 @@ class WesternShooter {
       if (p.vx !== undefined) { p.x += p.vx; p.y += p.vy; p.vy += 0.18; }
     });
     this.particles = this.particles.filter(p => p.t > 0);
+    // Respawn bottles
+    for (const b of this.bottles) {
+      if (!b.alive && b.respawnTimer !== undefined) {
+        b.respawnTimer -= dt;
+        if (b.respawnTimer <= 0) { b.alive = true; b.respawnTimer = undefined; }
+      }
+    }
+    // Respawn chandelier
+    if (!this.chandelierAlive && this.chandelierRespawn > 0) {
+      this.chandelierRespawn -= dt;
+      if (this.chandelierRespawn <= 0) this.chandelierAlive = true;
+    }
   }
 
   updateEnemy(e, dt) {
@@ -820,8 +1057,10 @@ class WesternShooter {
   // ─── RENDER ─────────────────────────────────────────────────────────────────
   render() {
     const ctx = this.ctx;
+    const dpr = this.dpr || 1;
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.save();
+    ctx.scale(dpr, dpr);
     ctx.translate(this.ox, this.oy);
     ctx.scale(this.scale, this.scale);
     switch (this.state) {
@@ -853,7 +1092,7 @@ class WesternShooter {
     }
     ctx.restore();
     this.drawBtn(ctx, W / 2, H / 2 + 108, 240, 52, 'ENTER THE BAR');
-    this._drawCredit(ctx, H - 32);
+    this._drawCredit(ctx, H - 42);
   }
 
   drawGameOver(ctx) {
@@ -873,7 +1112,8 @@ class WesternShooter {
     }
     ctx.restore();
     this.drawBtn(ctx, W / 2, H * 0.70, 200, 52, 'PLAY AGAIN');
-    this._drawCredit(ctx, H - 32);
+    this.drawBtn(ctx, W / 2, H * 0.80, 160, 44, 'EXIT');
+    this._drawCredit(ctx, H - 42);
   }
 
   drawPaused(ctx) {
@@ -889,7 +1129,8 @@ class WesternShooter {
     ctx.fillStyle = '#FFD700'; ctx.fillText('PAUSED', W / 2, H / 2 - 18);
     ctx.restore();
     this.drawBtn(ctx, W / 2, H / 2 + 42, 180, 48, 'RESUME');
-    this._drawCredit(ctx, H - 32);
+    this.drawBtn(ctx, W / 2, H / 2 + 105, 160, 44, 'EXIT');
+    this._drawCredit(ctx, H - 42);
   }
 
   drawBtn(ctx, cx, cy, bw, bh, txt) {
@@ -973,7 +1214,6 @@ class WesternShooter {
       ctx.restore();
     }
 
-    this.drawCrosshair(ctx);
     this.drawHUD(ctx);
   }
 
@@ -1028,12 +1268,19 @@ class WesternShooter {
     }
     // Chandelier
     this.drawChandelier(ctx);
-    // Light cone
-    const lg = ctx.createRadialGradient(W / 2, 40, 0, W / 2, 40, 340);
-    lg.addColorStop(0, 'rgba(255,210,100,0.18)');
-    lg.addColorStop(0.5, 'rgba(255,170,50,0.06)');
-    lg.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = lg; ctx.fillRect(0, 0, W, H);
+    // Light cone — dimmer when chandelier is broken
+    if (this.chandelierAlive) {
+      const lg = ctx.createRadialGradient(W / 2, 40, 0, W / 2, 40, 340);
+      lg.addColorStop(0, 'rgba(255,210,100,0.18)');
+      lg.addColorStop(0.5, 'rgba(255,170,50,0.06)');
+      lg.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = lg; ctx.fillRect(0, 0, W, H);
+    } else {
+      const lg = ctx.createRadialGradient(W / 2, 40, 0, W / 2, 40, 200);
+      lg.addColorStop(0, 'rgba(255,180,60,0.04)');
+      lg.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = lg; ctx.fillRect(0, 0, W, H);
+    }
     // Vignette
     const vig = ctx.createRadialGradient(W / 2, H * 0.42, H * 0.2, W / 2, H * 0.42, H * 0.85);
     vig.addColorStop(0, 'rgba(0,0,0,0)'); vig.addColorStop(1, 'rgba(0,0,0,0.6)');
@@ -1178,26 +1425,97 @@ class WesternShooter {
   // ── Scene props ─────────────────────────────────────────────────────────────
   drawChandelier(ctx) {
     const cx = W / 2, cy = 36;
+    // Chain from ceiling
     ctx.strokeStyle = '#8B6914'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, cy - 8); ctx.stroke();
+    if (!this.chandelierAlive) {
+      // Broken: just dangling chain + sparks
+      ctx.strokeStyle = '#5A4010'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(cx, cy - 8); ctx.lineTo(cx - 3, cy + 4); ctx.stroke();
+      // Occasional spark
+      if (Math.sin(this.time * 7) > 0.7) {
+        ctx.fillStyle = '#FFD700'; ctx.globalAlpha = 0.5;
+        ctx.beginPath(); ctx.arc(cx - 1, cy, 2, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      return;
+    }
+    // Main body
     ctx.fillStyle = '#B8860B'; ctx.beginPath(); ctx.arc(cx, cy, 18, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#DAA520'; ctx.beginPath(); ctx.arc(cx, cy, 10, 0, Math.PI * 2); ctx.fill();
+    // Candles with flickering flames
     for (let j = -2; j <= 2; j++) {
-      ctx.fillStyle = '#FF8C00'; ctx.beginPath(); ctx.arc(cx + j * 9, cy - 8, 3.5, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#FFD700'; ctx.beginPath(); ctx.arc(cx + j * 9, cy - 11, 1.8, 0, Math.PI * 2); ctx.fill();
+      const fx = cx + j * 9;
+      const flicker = Math.sin(this.time * 8 + j * 2) * 1.5;
+      ctx.fillStyle = '#FF8C00'; ctx.beginPath(); ctx.arc(fx, cy - 8, 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#FFD700'; ctx.beginPath(); ctx.arc(fx, cy - 11 + flicker, 1.8, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,220,80,0.3)'; ctx.beginPath(); ctx.arc(fx, cy - 10 + flicker, 5, 0, Math.PI * 2); ctx.fill();
     }
   }
 
   drawWanted(ctx, x, y) {
-    ctx.fillStyle = '#DEB87A'; ctx.fillRect(x, y, 52, 66);
-    ctx.strokeStyle = '#7A4510'; ctx.lineWidth = 1.5; ctx.strokeRect(x, y, 52, 66);
-    ctx.fillStyle = '#8B0000'; ctx.font = 'bold 7px Georgia, serif'; ctx.textAlign = 'center';
-    ctx.fillText('WANTED', x + 26, y + 10);
-    ctx.fillStyle = '#C8A070'; ctx.beginPath(); ctx.arc(x + 26, y + 28, 10, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#2C1810'; ctx.fillRect(x + 15, y + 20, 22, 4); ctx.fillRect(x + 17, y + 15, 18, 8);
-    ctx.fillStyle = '#8B0000'; ctx.font = '5px Georgia, serif';
-    ctx.fillText('DEAD OR ALIVE', x + 26, y + 55);
+    const pw = 56, ph = 72;
+    // Aged parchment background
+    ctx.save();
+    ctx.fillStyle = '#E8D5A8'; ctx.fillRect(x, y, pw, ph);
+    // Aged texture
+    ctx.fillStyle = 'rgba(180,140,80,0.12)'; ctx.fillRect(x + 3, y + 12, pw - 6, 30);
+    ctx.fillStyle = 'rgba(100,70,30,0.08)';
+    ctx.beginPath(); ctx.ellipse(x + pw * 0.3, y + ph * 0.7, 12, 8, 0.2, 0, Math.PI * 2); ctx.fill();
+    // Double border
+    ctx.strokeStyle = '#7A4510'; ctx.lineWidth = 2; ctx.strokeRect(x, y, pw, ph);
+    ctx.strokeStyle = '#9B6B30'; ctx.lineWidth = 0.8; ctx.strokeRect(x + 3, y + 3, pw - 6, ph - 6);
+    // "WANTED" header
+    ctx.fillStyle = '#8B0000'; ctx.font = 'bold 8px Georgia, serif'; ctx.textAlign = 'center';
+    ctx.fillText('WANTED', x + pw / 2, y + 12);
+    // Decorative line under WANTED
+    ctx.strokeStyle = '#8B0000'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(x + 8, y + 14); ctx.lineTo(x + pw - 8, y + 14); ctx.stroke();
+    // Face portrait area — darker background
+    const faceX = x + pw / 2, faceY = y + 32;
+    ctx.fillStyle = '#D4BA8A'; ctx.fillRect(x + 10, y + 17, pw - 20, 28);
+    ctx.strokeStyle = '#8B6B30'; ctx.lineWidth = 0.6; ctx.strokeRect(x + 10, y + 17, pw - 20, 28);
+    // Head
+    ctx.fillStyle = '#C8946A'; ctx.beginPath(); ctx.arc(faceX, faceY, 9, 0, Math.PI * 2); ctx.fill();
+    // Hat
+    ctx.fillStyle = '#3A2008';
+    ctx.fillRect(faceX - 12, faceY - 14, 24, 5);
+    ctx.fillRect(faceX - 7, faceY - 20, 14, 8);
+    // Eyes
+    ctx.fillStyle = '#1A0A00';
+    ctx.beginPath(); ctx.arc(faceX - 3, faceY - 2, 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(faceX + 3, faceY - 2, 1.5, 0, Math.PI * 2); ctx.fill();
+    // Eyebrows (menacing)
+    ctx.strokeStyle = '#2C1810'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(faceX - 5, faceY - 5); ctx.lineTo(faceX - 1, faceY - 4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(faceX + 5, faceY - 5); ctx.lineTo(faceX + 1, faceY - 4); ctx.stroke();
+    // Nose
+    ctx.strokeStyle = '#A07050'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(faceX, faceY - 1); ctx.lineTo(faceX - 1.5, faceY + 2); ctx.lineTo(faceX + 1.5, faceY + 2); ctx.stroke();
+    // Mustache
+    ctx.fillStyle = '#2C1810';
+    ctx.beginPath(); ctx.moveTo(faceX - 6, faceY + 3); ctx.quadraticCurveTo(faceX, faceY + 5, faceX + 6, faceY + 3);
+    ctx.quadraticCurveTo(faceX, faceY + 7, faceX - 6, faceY + 3); ctx.fill();
+    // Mouth/frown
+    ctx.strokeStyle = '#6B3A20'; ctx.lineWidth = 0.6;
+    ctx.beginPath(); ctx.arc(faceX, faceY + 9, 3, 0.15, Math.PI - 0.15); ctx.stroke();
+    // "DEAD OR ALIVE" text
+    ctx.fillStyle = '#5A2010'; ctx.font = 'bold 5px Georgia, serif';
+    ctx.fillText('DEAD OR ALIVE', x + pw / 2, y + 52);
+    // Decorative line
+    ctx.strokeStyle = '#8B0000'; ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(x + 8, y + 54); ctx.lineTo(x + pw - 8, y + 54); ctx.stroke();
+    // Reward amount
+    ctx.fillStyle = '#3A1A00'; ctx.font = 'bold 7px Georgia, serif';
+    ctx.fillText('$500 REWARD', x + pw / 2, y + 63);
+    // Corner tacks
+    ctx.fillStyle = '#8B7030';
+    ctx.beginPath(); ctx.arc(x + 5, y + 5, 2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + pw - 5, y + 5, 2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + 5, y + ph - 5, 2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + pw - 5, y + ph - 5, 2, 0, Math.PI * 2); ctx.fill();
     ctx.textAlign = 'left';
+    ctx.restore();
   }
 
   drawBottles(ctx) {
@@ -1847,71 +2165,99 @@ class WesternShooter {
   _drawCredit(ctx, baseY) {
     ctx.save();
     const cx = W / 2;
+    const bw = 300, bh = 90, bx = cx - bw / 2, by = baseY - 50;
 
-    // ── Torn poster/banner background ──
-    const bw = 260, bh = 52, bx = cx - bw / 2, by = baseY - 28;
-    // Parchment background with torn edges
-    ctx.fillStyle = '#D4B896';
-    ctx.beginPath();
-    ctx.moveTo(bx + 3, by);
-    ctx.lineTo(bx + bw - 5, by + 2);
-    ctx.lineTo(bx + bw - 2, by + bh - 3);
-    ctx.lineTo(bx + 5, by + bh);
-    ctx.closePath();
-    ctx.fill();
-    // Darker border/burnt edges
-    ctx.strokeStyle = '#8B6914'; ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(bx + 3, by);  ctx.lineTo(bx + bw - 5, by + 2);
-    ctx.lineTo(bx + bw - 2, by + bh - 3); ctx.lineTo(bx + 5, by + bh);
-    ctx.closePath(); ctx.stroke();
-    // Aged stain patches
-    ctx.fillStyle = 'rgba(139,90,43,0.15)';
-    ctx.beginPath(); ctx.ellipse(cx - 40, baseY - 5, 30, 12, 0.2, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = 'rgba(101,67,33,0.12)';
-    ctx.beginPath(); ctx.ellipse(cx + 50, baseY + 2, 20, 10, -0.1, 0, Math.PI * 2); ctx.fill();
+    // ══ Wooden sign board ══
+    // Shadow behind board
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    drawRR(ctx, bx + 4, by + 5, bw, bh, 6); ctx.fill();
 
-    // ── Bullet hole on right side ──
-    const bhx = bx + bw - 28, bhy = baseY - 6;
-    // Torn paper rays around bullet hole
-    ctx.save();
-    ctx.translate(bhx, bhy);
-    for (let i = 0; i < 8; i++) {
-      const a = (i / 8) * Math.PI * 2 + 0.3;
-      const len = 6 + Math.sin(i * 2.7) * 3;
-      ctx.fillStyle = 'rgba(60,30,10,0.25)';
+    // Main wood plank
+    const woodGrad = ctx.createLinearGradient(bx, by, bx, by + bh);
+    woodGrad.addColorStop(0, '#A07040');
+    woodGrad.addColorStop(0.15, '#8B5E30');
+    woodGrad.addColorStop(0.5, '#7A4E25');
+    woodGrad.addColorStop(0.85, '#6B4020');
+    woodGrad.addColorStop(1, '#5A3518');
+    ctx.fillStyle = woodGrad;
+    drawRR(ctx, bx, by, bw, bh, 6); ctx.fill();
+
+    // Wood grain lines
+    ctx.strokeStyle = 'rgba(50,25,5,0.15)'; ctx.lineWidth = 0.8;
+    for (let i = 0; i < 7; i++) {
+      const gy = by + 8 + i * 12;
       ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * 4, Math.sin(a) * 4);
-      ctx.lineTo(Math.cos(a - 0.15) * len, Math.sin(a - 0.15) * len);
-      ctx.lineTo(Math.cos(a + 0.15) * len, Math.sin(a + 0.15) * len);
-      ctx.closePath(); ctx.fill();
+      ctx.moveTo(bx + 8, gy);
+      ctx.quadraticCurveTo(cx + Math.sin(i * 1.3) * 30, gy + Math.sin(i * 0.7) * 3, bx + bw - 8, gy + Math.sin(i) * 2);
+      ctx.stroke();
     }
-    // Outer ring — scorched
-    ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2);
-    ctx.fillStyle = '#3A2510'; ctx.fill();
-    // Inner hole — dark
-    ctx.beginPath(); ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
-    ctx.fillStyle = '#0A0500'; ctx.fill();
-    // Rim highlight
-    ctx.beginPath(); ctx.arc(-1, -1, 5, Math.PI * 0.8, Math.PI * 1.6);
-    ctx.strokeStyle = 'rgba(180,140,80,0.35)'; ctx.lineWidth = 1; ctx.stroke();
-    ctx.restore();
 
-    // ── Text ──
+    // Outer frame (ornate dark border)
+    ctx.strokeStyle = '#3A1A08'; ctx.lineWidth = 3;
+    drawRR(ctx, bx, by, bw, bh, 6); ctx.stroke();
+    // Inner frame line (golden)
+    ctx.strokeStyle = '#C8A040'; ctx.lineWidth = 1.5;
+    drawRR(ctx, bx + 6, by + 6, bw - 12, bh - 12, 4); ctx.stroke();
+
+    // Corner nail heads
+    const nails = [[bx + 10, by + 10], [bx + bw - 10, by + 10], [bx + 10, by + bh - 10], [bx + bw - 10, by + bh - 10]];
+    for (const [nx, ny] of nails) {
+      ctx.beginPath(); ctx.arc(nx, ny, 3.5, 0, Math.PI * 2);
+      const ng = ctx.createRadialGradient(nx - 1, ny - 1, 0.5, nx, ny, 3.5);
+      ng.addColorStop(0, '#D0C080'); ng.addColorStop(1, '#8A7030');
+      ctx.fillStyle = ng; ctx.fill();
+      ctx.strokeStyle = 'rgba(60,40,10,0.4)'; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.arc(nx, ny, 3.5, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    // ══ Decorative stars on sides ══
+    const drawStar = (sx, sy, r) => {
+      ctx.beginPath();
+      for (let i = 0; i < 5; i++) {
+        const a = (i * 4 * Math.PI) / 5 - Math.PI / 2;
+        ctx[i === 0 ? 'moveTo' : 'lineTo'](sx + Math.cos(a) * r, sy + Math.sin(a) * r);
+      }
+      ctx.closePath(); ctx.fill();
+    };
+    ctx.fillStyle = '#DAA520';
+    drawStar(bx + 24, baseY - 10, 5);
+    drawStar(bx + bw - 24, baseY - 10, 5);
+
+    // ══ Text ══
+    // "Developed By" — embossed style
     ctx.textAlign = 'center';
-    // "Developed By Kendine Coder" in western style
-    ctx.font = 'bold 13px Georgia, serif';
-    ctx.fillStyle = '#3A1A00';
-    ctx.fillText('Developed By Kendine Coder', cx - 6, baseY - 6);
-    // URL
-    ctx.font = '11px Georgia, serif';
-    ctx.fillStyle = '#6B4226';
-    ctx.fillText('kendinecoder.com', cx - 6, baseY + 10);
+    ctx.font = 'bold 11px Georgia, serif';
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillText('Developed By', cx + 1, baseY - 17);
+    ctx.fillStyle = '#E8D0A0';
+    ctx.fillText('Developed By', cx, baseY - 18);
 
-    // Small decorative dashes on sides of text
-    ctx.strokeStyle = '#8B6914'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(cx - 110, baseY - 2); ctx.lineTo(cx - 80, baseY - 2); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx + 70, baseY - 2); ctx.lineTo(cx + 100, baseY - 2); ctx.stroke();
+    // "Kendine Coder" — large golden text
+    ctx.font = 'bold 22px Georgia, serif';
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillText('Kendine Coder', cx + 1, baseY + 6);
+    const tg = ctx.createLinearGradient(cx - 80, baseY - 5, cx - 80, baseY + 8);
+    tg.addColorStop(0, '#FFE880'); tg.addColorStop(0.5, '#DAA520'); tg.addColorStop(1, '#B8860B');
+    ctx.fillStyle = tg;
+    ctx.fillText('Kendine Coder', cx, baseY + 5);
+
+    // Website URL
+    ctx.font = '13px Georgia, serif';
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillText('kendinecoder.com', cx + 1, baseY + 24);
+    ctx.fillStyle = '#D4B880';
+    ctx.fillText('kendinecoder.com', cx, baseY + 23);
+
+    // Decorative line separators
+    ctx.strokeStyle = '#C8A040'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx - 100, baseY - 8); ctx.lineTo(cx - 38, baseY - 8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx + 38, baseY - 8); ctx.lineTo(cx + 100, baseY - 8); ctx.stroke();
+    // Small diamond in center of lines
+    ctx.fillStyle = '#DAA520';
+    ctx.save(); ctx.translate(cx - 115, baseY - 8); ctx.rotate(Math.PI / 4);
+    ctx.fillRect(-2, -2, 4, 4); ctx.restore();
+    ctx.save(); ctx.translate(cx + 115, baseY - 8); ctx.rotate(Math.PI / 4);
+    ctx.fillRect(-2, -2, 4, 4); ctx.restore();
 
     ctx.restore();
   }
@@ -1943,14 +2289,56 @@ class WesternShooter {
     // Ammo wheel
     this.drawAmmoWheel(ctx);
 
-    // Reload
+    // Reload — cylinder spin animation
     if (this.reloading) {
       const prog = 1 - this.reloadTimer / RELOAD_TIME;
-      const bw = 140, bh = 6, bx = W / 2 - bw / 2, by = H - 160;
-      ctx.fillStyle = 'rgba(0,0,0,0.4)'; drawRR(ctx, bx - 1, by - 1, bw + 2, bh + 2, 3); ctx.fill();
-      ctx.fillStyle = '#8B4513'; drawRR(ctx, bx, by, bw * prog, bh, 2); ctx.fill();
-      ctx.font = '12px Georgia, serif'; ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(255,215,0,0.8)'; ctx.fillText('RELOADING', W / 2, by - 5);
+      const cx = W / 2, cy = H - 175, R = 28;
+
+      // Spinning cylinder overlay
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.beginPath(); ctx.arc(cx, cy, R + 6, 0, Math.PI * 2); ctx.fill();
+      // Cylinder body
+      const cg = ctx.createRadialGradient(cx - 4, cy - 4, 1, cx, cy, R);
+      cg.addColorStop(0, '#909090'); cg.addColorStop(0.5, '#606060'); cg.addColorStop(1, '#2A2A2A');
+      ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(160,160,160,0.4)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+
+      // Spinning chambers with bullets loading in
+      const spinAngle = prog * Math.PI * 4; // 2 full spins
+      ctx.strokeStyle = 'rgba(20,20,20,0.3)'; ctx.lineWidth = 1.5;
+      for (let i = 0; i < 6; i++) {
+        const fa = (i / 6) * Math.PI * 2 + spinAngle + Math.PI / 6;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(fa) * 5, cy + Math.sin(fa) * 5);
+        ctx.lineTo(cx + Math.cos(fa) * (R - 1), cy + Math.sin(fa) * (R - 1));
+        ctx.stroke();
+      }
+      const bulletsLoaded = Math.floor(prog * MAX_BULLETS);
+      for (let i = 0; i < MAX_BULLETS; i++) {
+        const a = (i / MAX_BULLETS) * Math.PI * 2 + spinAngle;
+        const bx = cx + Math.cos(a) * (R * 0.55), by = cy + Math.sin(a) * (R * 0.55);
+        ctx.beginPath(); ctx.arc(bx, by, 4, 0, Math.PI * 2);
+        if (i < bulletsLoaded) {
+          const bg = ctx.createRadialGradient(bx, by, 0.5, bx, by, 4);
+          bg.addColorStop(0, '#FFE880'); bg.addColorStop(1, '#C8A030'); ctx.fillStyle = bg;
+        } else ctx.fillStyle = '#0A0A0A';
+        ctx.fill();
+      }
+      // Center pin
+      ctx.fillStyle = '#808080'; ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+
+      // Progress arc around cylinder
+      ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(cx, cy, R + 4, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2); ctx.stroke();
+
+      // Label
+      ctx.font = 'bold 13px Georgia, serif'; ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillText('RELOADING', cx + 1, cy + R + 20);
+      ctx.fillStyle = 'rgba(255,215,0,0.85)'; ctx.fillText('RELOADING', cx, cy + R + 19);
     } else if (this.bullets === 0) {
       const p = 0.6 + Math.abs(Math.sin(this.time * 3.6)) * 0.4;
       ctx.save(); ctx.globalAlpha = p;
