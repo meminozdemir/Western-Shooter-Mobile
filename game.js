@@ -1,9 +1,10 @@
 /**
  * Western Shooter — Mobile Game
  * Pure HTML5 Canvas + Vanilla JavaScript
- * Portrait mobile design (480 × 720 logical pixels)
+ * Responsive design: scales to fill any screen (portrait or landscape).
  *
- * Controls: tap an enemy to shoot it, tap RELOAD (or empty-barrel tap) to reload.
+ * Controls (touch): tap an enemy to shoot it; tap RELOAD (or tap when empty) to reload.
+ * Controls (mouse):  click to shoot / reload (desktop fallback).
  */
 'use strict';
 
@@ -101,7 +102,8 @@ class WesternShooter {
     // Game state
     this.state    = 'intro'; // 'intro' | 'playing' | 'gameover'
     this.score    = 0;
-    this.bestScore = 0;
+    // Restore best score from Local Storage so it survives app restarts on Android
+    this.bestScore = parseInt(localStorage.getItem('westernShooterBest') || '0', 10);
     this.lives    = MAX_LIVES;
     this.bullets  = MAX_BULLETS;
     this.reloading    = false;
@@ -167,14 +169,26 @@ class WesternShooter {
       this.aimY = p.y;
       if (isTap) this.onTap(p.x, p.y);
     };
+
+    // Touch events — use the first changed touch for single-tap gameplay.
+    // passive: false is required so we can call e.preventDefault() and stop
+    // the WebView from triggering scroll / zoom behaviours during gameplay.
     this.canvas.addEventListener('touchstart', e => {
       e.preventDefault();
       handle(e.changedTouches[0].clientX, e.changedTouches[0].clientY, true);
     }, { passive: false });
+    // Track aim on touchmove AND prevent WebView scroll/zoom gestures
     this.canvas.addEventListener('touchmove', e => {
       e.preventDefault();
       handle(e.changedTouches[0].clientX, e.changedTouches[0].clientY, false);
     }, { passive: false });
+
+    // Prevent touchend from triggering WebView gestures
+    this.canvas.addEventListener('touchend', e => {
+      e.preventDefault();
+    }, { passive: false });
+
+    // Mouse events for desktop browsers / Android emulator
     this.canvas.addEventListener('mousedown', e => handle(e.clientX, e.clientY, true));
     this.canvas.addEventListener('mousemove', e => handle(e.clientX, e.clientY, false));
   }
@@ -314,6 +328,8 @@ class WesternShooter {
     this.hitFlash = 0.55;
     if (this.lives === 0) {
       this.bestScore = Math.max(this.bestScore, this.score);
+      // Persist the best score so it survives app restarts on Android
+      try { localStorage.setItem('westernShooterBest', String(this.bestScore)); } catch (e) { console.warn('Could not save best score:', e); }
       setTimeout(() => { this.state = 'gameover'; }, 550);
     }
   }
