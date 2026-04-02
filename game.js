@@ -1,9 +1,10 @@
 /**
  * Western Shooter — Mobile Game
  * Pure HTML5 Canvas + Vanilla JavaScript
- * Portrait mobile design (480 × 720 logical pixels)
+ * Responsive design: scales to fill any screen (portrait or landscape).
  *
- * Controls: tap an enemy to shoot it, tap RELOAD (or empty-barrel tap) to reload.
+ * Controls (touch): tap an enemy to shoot it; tap RELOAD (or tap when empty) to reload.
+ * Controls (mouse):  click to shoot / reload (desktop fallback).
  */
 'use strict';
 
@@ -14,15 +15,15 @@ const MAX_BULLETS = 6;
 const RELOAD_TIME = 2.0;   // seconds
 const MAX_LIVES   = 3;
 
-// OTS Gun
-const GUN_ARM_LEN          = 130;   // sleeve length: pivot → grip (px)
-const GUN_BARREL_LEN       = 72;    // barrel extension beyond grip (px)
+// OTS Gun — Colt Peacemaker proportions
+const GUN_ARM_LEN          = 140;   // sleeve length: pivot → grip (px)
+const GUN_BARREL_LEN       = 82;    // barrel extension beyond grip (px)
 const GUN_MIN_ANGLE        = -Math.PI + 0.15; // leftmost aim angle (rad)
 const GUN_MAX_ANGLE        = -0.18;           // rightmost aim angle (rad)
-const RECOIL_DURATION      = 0.18;  // seconds for full recoil cycle
-const RECOIL_MAX_DIST      = 18;    // max backward shift during recoil (px)
-const RECOIL_MAX_ANGLE     = 0.06;  // max upward angular kick during recoil (rad)
-const CYLINDER_ROT_SPEED   = 0.4;   // cylinder idle rotation speed (rad/s)
+const RECOIL_DURATION      = 0.20;  // seconds for full recoil cycle
+const RECOIL_MAX_DIST      = 22;    // max backward shift during recoil (px)
+const RECOIL_MAX_ANGLE     = 0.08;  // max upward angular kick during recoil (rad)
+const CYLINDER_ROT_SPEED   = 0.35;  // cylinder idle rotation speed (rad/s)
 
 // Bar-door position (enemies enter from here)
 const DOOR_CX = 412;
@@ -101,7 +102,8 @@ class WesternShooter {
     // Game state
     this.state    = 'intro'; // 'intro' | 'playing' | 'gameover'
     this.score    = 0;
-    this.bestScore = 0;
+    // Restore best score from Local Storage so it survives app restarts on Android
+    this.bestScore = parseInt(localStorage.getItem('westernShooterBest') || '0', 10);
     this.lives    = MAX_LIVES;
     this.bullets  = MAX_BULLETS;
     this.reloading    = false;
@@ -167,14 +169,26 @@ class WesternShooter {
       this.aimY = p.y;
       if (isTap) this.onTap(p.x, p.y);
     };
+
+    // Touch events — use the first changed touch for single-tap gameplay.
+    // passive: false is required so we can call e.preventDefault() and stop
+    // the WebView from triggering scroll / zoom behaviours during gameplay.
     this.canvas.addEventListener('touchstart', e => {
       e.preventDefault();
       handle(e.changedTouches[0].clientX, e.changedTouches[0].clientY, true);
     }, { passive: false });
+    // Track aim on touchmove AND prevent WebView scroll/zoom gestures
     this.canvas.addEventListener('touchmove', e => {
       e.preventDefault();
       handle(e.changedTouches[0].clientX, e.changedTouches[0].clientY, false);
     }, { passive: false });
+
+    // Prevent touchend from triggering WebView gestures
+    this.canvas.addEventListener('touchend', e => {
+      e.preventDefault();
+    }, { passive: false });
+
+    // Mouse events for desktop browsers / Android emulator
     this.canvas.addEventListener('mousedown', e => handle(e.clientX, e.clientY, true));
     this.canvas.addEventListener('mousemove', e => handle(e.clientX, e.clientY, false));
   }
@@ -314,6 +328,8 @@ class WesternShooter {
     this.hitFlash = 0.55;
     if (this.lives === 0) {
       this.bestScore = Math.max(this.bestScore, this.score);
+      // Persist the best score so it survives app restarts on Android
+      try { localStorage.setItem('westernShooterBest', String(this.bestScore)); } catch (e) { console.warn('Could not save best score:', e); }
       setTimeout(() => { this.state = 'gameover'; }, 550);
     }
   }
@@ -934,7 +950,7 @@ class WesternShooter {
     ctx.restore();
   }
 
-  // ── Player OTS Gun (Over-the-shoulder revolver) ──────────────────────────
+  // ── Player OTS Gun (Over-the-shoulder Colt Peacemaker) ─────────────────────
   drawPlayerGun(ctx) {
     if (this.state !== 'playing') return;
 
@@ -946,196 +962,542 @@ class WesternShooter {
     const dx = this.aimX - pivotX;
     const dy = this.aimY - pivotY;
     let angle = Math.atan2(dy, dx);
-    // Clamp so gun always points into the scene (upper-left to upper-right arc)
     angle = clamp(angle, GUN_MIN_ANGLE, GUN_MAX_ANGLE);
 
-    // Recoil: smooth sin-curve kick over RECOIL_DURATION s (backward + slight upward)
+    // Recoil: smooth sin-curve kick
     const recoilFrac = this.recoilT > 0
       ? Math.sin((1 - this.recoilT / RECOIL_DURATION) * Math.PI)
       : 0;
-    const recoilOff  = recoilFrac * RECOIL_MAX_DIST;   // backward shift in pixels
-    const recoilKick = recoilFrac * RECOIL_MAX_ANGLE;  // upward angular kick in radians
+    const recoilOff  = recoilFrac * RECOIL_MAX_DIST;
+    const recoilKick = recoilFrac * RECOIL_MAX_ANGLE;
 
-    // Arm + gun geometry
-    const armLen    = GUN_ARM_LEN;    // sleeve length (pivot → grip)
-    const barrelLen = GUN_BARREL_LEN; // barrel extension beyond grip
+    const armLen    = GUN_ARM_LEN;
+    const barrelLen = GUN_BARREL_LEN;
     const totalLen  = armLen + barrelLen - recoilOff;
 
-    // Store muzzle world position for muzzle-flash particle origin
     const effAngle = angle - recoilKick;
     this.muzzleX = pivotX + Math.cos(effAngle) * totalLen;
     this.muzzleY = pivotY + Math.sin(effAngle) * totalLen;
 
     ctx.save();
     ctx.translate(pivotX, pivotY);
-    ctx.rotate(effAngle); // slight upward angular kick during recoil
+    ctx.rotate(effAngle);
 
-    // local x=0 is at pivot; x increases toward muzzle; y=0 is along barrel axis
+    const ro = recoilOff; // shorthand
 
-    // ── Jacket sleeve ──
-    const slvGrad = ctx.createLinearGradient(0, -20, 0, 18);
-    slvGrad.addColorStop(0,    '#2C1A08');
-    slvGrad.addColorStop(0.45, '#4A2E14');
-    slvGrad.addColorStop(1,    '#180E04');
+    // ── Leather duster coat sleeve ──
+    const slvGrad = ctx.createLinearGradient(0, -22, 0, 22);
+    slvGrad.addColorStop(0,    '#3D2410');
+    slvGrad.addColorStop(0.20, '#5A3A1E');
+    slvGrad.addColorStop(0.50, '#6B4828');
+    slvGrad.addColorStop(0.80, '#4A3018');
+    slvGrad.addColorStop(1,    '#2A1808');
     ctx.fillStyle = slvGrad;
     ctx.beginPath();
-    ctx.moveTo(-recoilOff - 20, -14);
-    ctx.lineTo(armLen - recoilOff + 14, -12);
-    ctx.lineTo(armLen - recoilOff + 16, 14);
-    ctx.lineTo(-recoilOff - 20, 14);
+    ctx.moveTo(-ro - 30, -18);
+    ctx.quadraticCurveTo(armLen * 0.3 - ro, -20, armLen - ro + 8, -14);
+    ctx.lineTo(armLen - ro + 10,  16);
+    ctx.quadraticCurveTo(armLen * 0.3 - ro, 18, -ro - 30, 17);
     ctx.closePath();
     ctx.fill();
 
-    // Sleeve highlight crease
+    // Sleeve leather stitching (double row)
     ctx.save();
-    ctx.strokeStyle = 'rgba(130,90,45,0.35)';
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(180,140,80,0.30)';
+    ctx.lineWidth = 0.8;
+    ctx.setLineDash([3, 4]);
     ctx.beginPath();
-    ctx.moveTo(-recoilOff, -13);
-    ctx.quadraticCurveTo(armLen * 0.5 - recoilOff, -18, armLen - recoilOff + 10, -10);
+    ctx.moveTo(-ro + 10, -16);
+    ctx.quadraticCurveTo(armLen * 0.5 - ro, -19, armLen - ro + 6, -12);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-ro + 10, 15);
+    ctx.quadraticCurveTo(armLen * 0.5 - ro, 17, armLen - ro + 8, 14);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    // Sleeve wrinkle folds (3 fabric creases)
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    ctx.lineWidth = 1.2;
+    for (let w = 0; w < 3; w++) {
+      const wx = armLen * (0.2 + w * 0.22) - ro;
+      ctx.beginPath();
+      ctx.moveTo(wx, -15);
+      ctx.quadraticCurveTo(wx + 3, 0, wx - 1, 14);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Sleeve cuff (folded leather edge)
+    const cuffX = armLen - ro + 2;
+    const cuffGrad = ctx.createLinearGradient(cuffX - 12, 0, cuffX + 4, 0);
+    cuffGrad.addColorStop(0, '#5A3A1E');
+    cuffGrad.addColorStop(1, '#3A2210');
+    ctx.fillStyle = cuffGrad;
+    ctx.beginPath();
+    ctx.moveTo(cuffX - 12, -14);
+    ctx.lineTo(cuffX + 4,  -12);
+    ctx.lineTo(cuffX + 6,   14);
+    ctx.lineTo(cuffX - 12,  15);
+    ctx.closePath();
+    ctx.fill();
+
+    // ── Leather glove hand ──
+    const handX = armLen - ro + 6;
+    // Wrist
+    const wristGrad = ctx.createRadialGradient(handX - 2, 1, 2, handX, 1, 16);
+    wristGrad.addColorStop(0, '#8B6538');
+    wristGrad.addColorStop(1, '#5A3E20');
+    ctx.fillStyle = wristGrad;
+    ctx.beginPath();
+    ctx.ellipse(handX - 2, 1, 14, 12, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Palm/fingers gripping
+    const palmGrad = ctx.createLinearGradient(handX, -10, handX, 12);
+    palmGrad.addColorStop(0, '#7A5530');
+    palmGrad.addColorStop(0.5, '#96703E');
+    palmGrad.addColorStop(1, '#6B4828');
+    ctx.fillStyle = palmGrad;
+    ctx.beginPath();
+    ctx.ellipse(handX + 6, 2, 12, 10, 0.15, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Finger segments wrapping grip
+    ctx.strokeStyle = 'rgba(60,35,10,0.5)';
+    ctx.lineWidth = 0.8;
+    for (let f = 0; f < 4; f++) {
+      const fy = -5 + f * 4.5;
+      ctx.beginPath();
+      ctx.moveTo(handX - 2, fy);
+      ctx.quadraticCurveTo(handX + 10, fy + 1.5, handX + 16, fy);
+      ctx.stroke();
+    }
+
+    // Thumb (on top of grip)
+    ctx.fillStyle = '#8B6538';
+    ctx.beginPath();
+    ctx.ellipse(handX + 12, -8, 8, 4.5, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(60,35,10,0.4)';
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    ctx.arc(handX + 16, -8, 3, 0, Math.PI);
+    ctx.stroke();
+
+    // Glove stitching detail on hand
+    ctx.strokeStyle = 'rgba(200,170,110,0.25)';
+    ctx.lineWidth = 0.6;
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath();
+    ctx.ellipse(handX + 4, 2, 14, 12, 0.15, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // ── Colt Peacemaker Revolver ──
+    const g = armLen - ro; // gun-origin x in local space
+
+    // --- Grip (walnut burl wood with medallion) ---
+    ctx.save();
+    const gripGrad = ctx.createLinearGradient(g - 2, 4, g + 20, 38);
+    gripGrad.addColorStop(0,    '#7A4420');
+    gripGrad.addColorStop(0.25, '#9B5E30');
+    gripGrad.addColorStop(0.50, '#6B3818');
+    gripGrad.addColorStop(0.75, '#8B5028');
+    gripGrad.addColorStop(1,    '#4A2810');
+    ctx.fillStyle = gripGrad;
+    ctx.beginPath();
+    ctx.moveTo(g + 2,   4);
+    ctx.lineTo(g + 20,  6);
+    ctx.quadraticCurveTo(g + 22, 20, g + 18, 38);
+    ctx.quadraticCurveTo(g + 10, 42, g - 2,  36);
+    ctx.quadraticCurveTo(g - 4,  20, g + 2,   4);
+    ctx.closePath();
+    ctx.fill();
+
+    // Wood grain pattern
+    ctx.strokeStyle = 'rgba(40,18,5,0.22)';
+    ctx.lineWidth = 0.7;
+    for (let wi = 0; wi < 7; wi++) {
+      const gy = 8 + wi * 4.2;
+      ctx.beginPath();
+      ctx.moveTo(g + 1, gy);
+      ctx.quadraticCurveTo(g + 10, gy + (wi % 2 === 0 ? 2 : -1.5), g + 19, gy + 1);
+      ctx.stroke();
+    }
+
+    // Checkering pattern (cross-hatch on lower grip)
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+    ctx.lineWidth = 0.5;
+    for (let ci = 0; ci < 8; ci++) {
+      ctx.beginPath();
+      ctx.moveTo(g + 3 + ci * 2, 16);
+      ctx.lineTo(g + 1 + ci * 2, 34);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(g + 3, 16 + ci * 2.4);
+      ctx.lineTo(g + 19, 17 + ci * 2.4);
+      ctx.stroke();
+    }
+
+    // Grip medallion (brass Colt emblem circle)
+    const medX = g + 10, medY = 22;
+    ctx.beginPath();
+    ctx.arc(medX, medY, 5.5, 0, Math.PI * 2);
+    const medGrad = ctx.createRadialGradient(medX - 1, medY - 1, 0.5, medX, medY, 5.5);
+    medGrad.addColorStop(0,   '#E8C860');
+    medGrad.addColorStop(0.6, '#C8A030');
+    medGrad.addColorStop(1,   '#8A7020');
+    ctx.fillStyle = medGrad;
+    ctx.fill();
+    ctx.strokeStyle = '#6A5010';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    // Star inside medallion
+    ctx.strokeStyle = '#9A7828';
+    ctx.lineWidth = 0.6;
+    for (let si = 0; si < 5; si++) {
+      const sa = (si / 5) * Math.PI * 2 - Math.PI / 2;
+      const sa2 = ((si + 2) / 5) * Math.PI * 2 - Math.PI / 2;
+      ctx.beginPath();
+      ctx.moveTo(medX + Math.cos(sa) * 3.5, medY + Math.sin(sa) * 3.5);
+      ctx.lineTo(medX + Math.cos(sa2) * 3.5, medY + Math.sin(sa2) * 3.5);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // --- Grip frame (back-strap, blued steel) ---
+    const bsGrad = ctx.createLinearGradient(g - 4, 4, g + 2, 4);
+    bsGrad.addColorStop(0, '#1A2A40');
+    bsGrad.addColorStop(0.5, '#2A3A55');
+    bsGrad.addColorStop(1, '#182838');
+    ctx.fillStyle = bsGrad;
+    ctx.beginPath();
+    ctx.moveTo(g - 2, 4);
+    ctx.lineTo(g + 3, 4);
+    ctx.quadraticCurveTo(g + 1, 20, g - 1, 36);
+    ctx.quadraticCurveTo(g - 5, 20, g - 2, 4);
+    ctx.closePath();
+    ctx.fill();
+
+    // --- Main frame (case-hardened steel with colour mottling) ---
+    const frmGrad = ctx.createLinearGradient(g - 6, -18, g - 6, 10);
+    frmGrad.addColorStop(0,    '#A8B0C0');
+    frmGrad.addColorStop(0.15, '#8090A8');
+    frmGrad.addColorStop(0.35, '#7888A0');
+    frmGrad.addColorStop(0.55, '#6878A0');
+    frmGrad.addColorStop(0.80, '#5060A0');
+    frmGrad.addColorStop(1,    '#384880');
+    ctx.fillStyle = frmGrad;
+    ctx.beginPath();
+    ctx.moveTo(g - 6,  -14);
+    ctx.lineTo(g + 26, -16);
+    ctx.lineTo(g + 28,   8);
+    ctx.lineTo(g + 2,    8);
+    ctx.lineTo(g - 4,    6);
+    ctx.closePath();
+    ctx.fill();
+
+    // Case-hardening colour swirl (semi-transparent overlay)
+    ctx.save();
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = '#6040C0';
+    ctx.beginPath();
+    ctx.ellipse(g + 8, -4, 12, 8, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#C08040';
+    ctx.beginPath();
+    ctx.ellipse(g + 18, -8, 8, 5, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Frame edge highlight (specular)
+    ctx.strokeStyle = 'rgba(200,210,230,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(g - 5, -13);
+    ctx.lineTo(g + 25, -15);
+    ctx.stroke();
+
+    // Engraving scroll on frame
+    ctx.save();
+    ctx.strokeStyle = 'rgba(180,190,210,0.25)';
+    ctx.lineWidth = 0.6;
+    // Scroll pattern
+    ctx.beginPath();
+    ctx.moveTo(g + 2, -6);
+    ctx.bezierCurveTo(g + 6, -10, g + 10, -2, g + 14, -8);
+    ctx.bezierCurveTo(g + 18, -12, g + 22, -4, g + 24, -10);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(g + 4, 2);
+    ctx.bezierCurveTo(g + 8, -2, g + 12, 4, g + 16, 0);
+    ctx.bezierCurveTo(g + 20, -3, g + 23, 2, g + 26, -1);
     ctx.stroke();
     ctx.restore();
 
-    // ── Hand (skin) ──
-    ctx.fillStyle = '#C8884A';
+    // --- Cylinder (rotating drum, blued finish) ---
+    const cylX = g + 12, cylY = -3;
+    const cylR = 15;
+    // Cylinder shadow behind
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.beginPath();
-    ctx.ellipse(armLen - recoilOff + 4, 1, 15, 11, 0, 0, Math.PI * 2);
-    ctx.fill();
-    // Knuckle detail
-    ctx.strokeStyle = 'rgba(100,60,20,0.45)';
-    ctx.lineWidth = 1;
-    for (let k = 0; k < 3; k++) {
-      ctx.beginPath();
-      ctx.arc(armLen - recoilOff - 6 + k * 8, -5, 3.5, 0, Math.PI);
-      ctx.stroke();
-    }
-
-    // ── Revolver ──
-    const g = armLen - recoilOff; // gun-origin x in local space
-
-    // --- Wooden grip ---
-    const gripGrad = ctx.createLinearGradient(g, 0, g + 18, 0);
-    gripGrad.addColorStop(0, '#6B3A12');
-    gripGrad.addColorStop(1, '#3A1C08');
-    ctx.fillStyle = gripGrad;
-    ctx.beginPath();
-    ctx.moveTo(g,      2);
-    ctx.lineTo(g + 18, 5);
-    ctx.lineTo(g + 16, 32);
-    ctx.lineTo(g - 3,  30);
-    ctx.closePath();
-    ctx.fill();
-    // Grip checkering
-    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-    ctx.lineWidth = 0.8;
-    for (let li = 0; li < 5; li++) {
-      ctx.beginPath();
-      ctx.moveTo(g + 1 + li * 3.2, 8);
-      ctx.lineTo(g + 1 + li * 3.2, 28);
-      ctx.stroke();
-    }
-
-    // --- Main frame ---
-    const frmGrad = ctx.createLinearGradient(g - 8, -16, g - 8, 10);
-    frmGrad.addColorStop(0,    '#9A9A9A');
-    frmGrad.addColorStop(0.45, '#666');
-    frmGrad.addColorStop(1,    '#333');
-    ctx.fillStyle = frmGrad;
-    ctx.beginPath();
-    ctx.moveTo(g - 8,  -12);
-    ctx.lineTo(g + 24, -16);
-    ctx.lineTo(g + 26,   8);
-    ctx.lineTo(g - 6,    7);
-    ctx.closePath();
+    ctx.ellipse(cylX + 1, cylY + 2, cylR + 1, cylR + 1, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // --- Cylinder (rotating drum) ---
-    const cylGrad = ctx.createRadialGradient(g + 9, -3, 1, g + 9, -3, 14);
-    cylGrad.addColorStop(0, '#888');
-    cylGrad.addColorStop(1, '#2E2E2E');
+    // Main cylinder body
+    const cylGrad = ctx.createRadialGradient(cylX - 3, cylY - 3, 1, cylX, cylY, cylR);
+    cylGrad.addColorStop(0,   '#7888A8');
+    cylGrad.addColorStop(0.3, '#5868A0');
+    cylGrad.addColorStop(0.7, '#384878');
+    cylGrad.addColorStop(1,   '#1A2840');
     ctx.fillStyle = cylGrad;
     ctx.beginPath();
-    ctx.arc(g + 9, -3, 14, 0, Math.PI * 2);
+    ctx.arc(cylX, cylY, cylR, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = '#1A1A1A';
+
+    // Cylinder rim edge
+    ctx.strokeStyle = 'rgba(120,140,180,0.5)';
     ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cylX, cylY, cylR, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Six chambers (slowly rotate; loaded = gold, spent = dark)
+    // Cylinder flutes (machined grooves between chambers)
     const cylAngle = this.time * CYLINDER_ROT_SPEED;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(10,15,30,0.35)';
+    ctx.lineWidth = 1.8;
+    for (let i = 0; i < 6; i++) {
+      const fa = (i / 6) * Math.PI * 2 + cylAngle + Math.PI / 6;
+      const fx1 = cylX + Math.cos(fa) * 6;
+      const fy1 = cylY + Math.sin(fa) * 6;
+      const fx2 = cylX + Math.cos(fa) * (cylR - 1);
+      const fy2 = cylY + Math.sin(fa) * (cylR - 1);
+      ctx.beginPath();
+      ctx.moveTo(fx1, fy1);
+      ctx.lineTo(fx2, fy2);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Six chambers (loaded = brass cartridge, spent = dark)
     for (let i = 0; i < 6; i++) {
       const ca  = (i / 6) * Math.PI * 2 + cylAngle;
-      const cbx = g + 9 + Math.cos(ca) * 8;
-      const cby = -3 + Math.sin(ca) * 8;
+      const cbx = cylX + Math.cos(ca) * 9;
+      const cby = cylY + Math.sin(ca) * 9;
+
+      // Chamber hole
       ctx.beginPath();
-      ctx.arc(cbx, cby, 3, 0, Math.PI * 2);
-      ctx.fillStyle = i < this.bullets ? '#C09020' : '#111';
-      ctx.fill();
-      ctx.strokeStyle = '#555';
-      ctx.lineWidth = 0.5;
+      ctx.arc(cbx, cby, 3.5, 0, Math.PI * 2);
+      if (i < this.bullets) {
+        // Loaded: brass cartridge primer
+        const brassGrad = ctx.createRadialGradient(cbx - 0.5, cby - 0.5, 0.5, cbx, cby, 3.5);
+        brassGrad.addColorStop(0, '#E8C860');
+        brassGrad.addColorStop(0.6, '#C8A030');
+        brassGrad.addColorStop(1, '#8A7020');
+        ctx.fillStyle = brassGrad;
+        ctx.fill();
+        // Primer circle
+        ctx.beginPath();
+        ctx.arc(cbx, cby, 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#AA7818';
+        ctx.fill();
+      } else {
+        // Spent: empty dark chamber
+        ctx.fillStyle = '#0A0A12';
+        ctx.fill();
+      }
+      ctx.strokeStyle = 'rgba(40,50,80,0.5)';
+      ctx.lineWidth = 0.6;
       ctx.stroke();
     }
 
-    // --- Barrel ---
-    const barGrad = ctx.createLinearGradient(g + 22, -12, g + 22, 4);
-    barGrad.addColorStop(0,   '#AAAAAA');
-    barGrad.addColorStop(0.5, '#666');
-    barGrad.addColorStop(1,   '#2E2E2E');
+    // Cylinder pin (center axis)
+    ctx.fillStyle = '#6878A8';
+    ctx.beginPath();
+    ctx.arc(cylX, cylY, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(30,40,70,0.6)';
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+
+    // Specular highlight on cylinder
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = '#C0D0F0';
+    ctx.beginPath();
+    ctx.ellipse(cylX - 5, cylY - 6, 6, 3.5, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // --- Barrel (octagonal profile, blued steel) ---
+    const barGrad = ctx.createLinearGradient(g + 24, -14, g + 24, 6);
+    barGrad.addColorStop(0,    '#8898B8');
+    barGrad.addColorStop(0.12, '#7080A8');
+    barGrad.addColorStop(0.30, '#5868A0');
+    barGrad.addColorStop(0.50, '#4858A0');
+    barGrad.addColorStop(0.70, '#384880');
+    barGrad.addColorStop(0.88, '#283868');
+    barGrad.addColorStop(1,    '#1A2848');
     ctx.fillStyle = barGrad;
     ctx.beginPath();
-    ctx.moveTo(g + 20, -11);
-    ctx.lineTo(g + barrelLen,  -9);
-    ctx.lineTo(g + barrelLen,   3);
-    ctx.lineTo(g + 20,          3);
+    ctx.moveTo(g + 22, -12);
+    ctx.lineTo(g + barrelLen + 2,  -10);
+    ctx.lineTo(g + barrelLen + 2,    4);
+    ctx.lineTo(g + 22,               4);
     ctx.closePath();
     ctx.fill();
 
-    // Barrel top rib
-    ctx.fillStyle = '#888';
-    ctx.fillRect(g + 22, -14, barrelLen - 22, 3);
+    // Top flat of octagonal barrel (lighter face)
+    const topGrad = ctx.createLinearGradient(g + 24, -14, g + 24, -10);
+    topGrad.addColorStop(0, '#A0B0D0');
+    topGrad.addColorStop(1, '#8090B0');
+    ctx.fillStyle = topGrad;
+    ctx.fillRect(g + 24, -14, barrelLen - 20, 3.5);
 
-    // Front sight blade
-    ctx.fillStyle = '#DDD';
-    ctx.fillRect(g + barrelLen - 8, -18, 4, 7);
+    // Barrel edge highlight
+    ctx.strokeStyle = 'rgba(160,180,220,0.3)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(g + 24, -12);
+    ctx.lineTo(g + barrelLen + 2, -10);
+    ctx.stroke();
+
+    // Ejector rod housing (beneath barrel)
+    ctx.fillStyle = '#3A4A70';
+    ctx.beginPath();
+    ctx.moveTo(g + 26, 1);
+    ctx.lineTo(g + barrelLen - 4, 0);
+    ctx.lineTo(g + barrelLen - 4, 5);
+    ctx.lineTo(g + 26, 6);
+    ctx.closePath();
+    ctx.fill();
+    // Ejector rod tip
+    ctx.fillStyle = '#6878A0';
+    ctx.beginPath();
+    ctx.arc(g + barrelLen - 2, 3, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Front sight blade (dove-tail style)
+    ctx.fillStyle = '#D0D8E8';
+    ctx.beginPath();
+    ctx.moveTo(g + barrelLen - 6, -18);
+    ctx.lineTo(g + barrelLen - 2, -18);
+    ctx.lineTo(g + barrelLen - 1, -12);
+    ctx.lineTo(g + barrelLen - 7, -12);
+    ctx.closePath();
+    ctx.fill();
+    // Sight notch
+    ctx.fillStyle = '#F8F0E0';
+    ctx.fillRect(g + barrelLen - 5, -20, 2, 3);
 
     // Muzzle crown
-    ctx.fillStyle = '#2A2A2A';
+    const mzX = g + barrelLen + 2, mzY = -3;
+    // Outer ring
+    const mzGrad = ctx.createRadialGradient(mzX, mzY, 2, mzX, mzY, 8);
+    mzGrad.addColorStop(0,   '#5060A0');
+    mzGrad.addColorStop(0.5, '#384878');
+    mzGrad.addColorStop(1,   '#1A2840');
+    ctx.fillStyle = mzGrad;
     ctx.beginPath();
-    ctx.arc(g + barrelLen, -3, 7, 0, Math.PI * 2);
+    ctx.arc(mzX, mzY, 8, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = '#666';
+    ctx.strokeStyle = 'rgba(120,140,180,0.4)';
     ctx.lineWidth = 1;
     ctx.stroke();
-    // Bore hole
-    ctx.fillStyle = '#000';
+    // Inner bore
+    ctx.fillStyle = '#050508';
     ctx.beginPath();
-    ctx.arc(g + barrelLen, -3, 3.5, 0, Math.PI * 2);
+    ctx.arc(mzX, mzY, 4, 0, Math.PI * 2);
     ctx.fill();
+    // Rifling hint inside bore
+    ctx.strokeStyle = 'rgba(60,70,100,0.4)';
+    ctx.lineWidth = 0.4;
+    for (let ri = 0; ri < 6; ri++) {
+      const ra = (ri / 6) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(mzX + Math.cos(ra) * 1.5, mzY + Math.sin(ra) * 1.5);
+      ctx.lineTo(mzX + Math.cos(ra) * 3.8, mzY + Math.sin(ra) * 3.8);
+      ctx.stroke();
+    }
 
-    // --- Trigger guard ---
-    ctx.strokeStyle = '#777';
-    ctx.lineWidth = 2;
+    // --- Trigger guard (brass) ---
+    const tgGrad = ctx.createLinearGradient(g, 8, g + 12, 28);
+    tgGrad.addColorStop(0,   '#D8B848');
+    tgGrad.addColorStop(0.5, '#C8A030');
+    tgGrad.addColorStop(1,   '#A88020');
+    ctx.strokeStyle = tgGrad;
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.arc(g + 5, 15, 11, -Math.PI * 0.1, Math.PI * 0.85);
+    ctx.moveTo(g + 2, 8);
+    ctx.quadraticCurveTo(g - 2, 22, g + 6, 28);
+    ctx.quadraticCurveTo(g + 14, 22, g + 12, 8);
     ctx.stroke();
 
-    // --- Trigger ---
-    ctx.strokeStyle = '#999';
-    ctx.lineWidth = 1.5;
+    // --- Trigger (blued steel) ---
+    ctx.strokeStyle = '#5868A0';
+    ctx.lineWidth = 1.8;
     ctx.beginPath();
-    ctx.moveTo(g + 5,  5);
-    ctx.lineTo(g + 3, 17);
+    ctx.moveTo(g + 7,  6);
+    ctx.quadraticCurveTo(g + 5, 14, g + 4, 20);
     ctx.stroke();
 
-    // --- Hammer ---
-    ctx.fillStyle = '#555';
+    // --- Hammer (cocked back, case-hardened) ---
+    const hmGrad = ctx.createLinearGradient(g + 18, -18, g + 30, -28);
+    hmGrad.addColorStop(0, '#8090A8');
+    hmGrad.addColorStop(0.5, '#6878A0');
+    hmGrad.addColorStop(1, '#4A5888');
+    ctx.fillStyle = hmGrad;
     ctx.beginPath();
-    ctx.moveTo(g + 18, -16);
-    ctx.lineTo(g + 26, -22);
+    ctx.moveTo(g + 20, -16);
+    ctx.lineTo(g + 24, -26);
+    ctx.quadraticCurveTo(g + 30, -28, g + 32, -22);
     ctx.lineTo(g + 28, -14);
-    ctx.lineTo(g + 20, -12);
     ctx.closePath();
     ctx.fill();
+    // Hammer spur serrations
+    ctx.strokeStyle = 'rgba(40,50,80,0.5)';
+    ctx.lineWidth = 0.5;
+    for (let hs = 0; hs < 4; hs++) {
+      const hsx = g + 24 + hs * 2;
+      ctx.beginPath();
+      ctx.moveTo(hsx, -26);
+      ctx.lineTo(hsx + 0.5, -23);
+      ctx.stroke();
+    }
+    // Hammer specular
+    ctx.save();
+    ctx.globalAlpha = 0.15;
+    ctx.fillStyle = '#C0D0F0';
+    ctx.beginPath();
+    ctx.ellipse(g + 26, -22, 3, 1.5, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // --- Loading gate (right side of frame) ---
+    ctx.fillStyle = 'rgba(90,110,150,0.4)';
+    ctx.beginPath();
+    ctx.arc(g + 22, 2, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(50,60,90,0.5)';
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+
+    // --- Gun drop shadow (subtle depth) ---
+    ctx.save();
+    ctx.globalAlpha = 0.08;
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.moveTo(g - 6, 10);
+    ctx.lineTo(g + barrelLen + 4, 8);
+    ctx.lineTo(g + barrelLen + 4, 12);
+    ctx.lineTo(g - 6, 14);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
 
     ctx.restore();
   }
@@ -1173,12 +1535,41 @@ class WesternShooter {
         ctx.beginPath(); ctx.arc(p.x, p.y, 14, 0, Math.PI * 2); ctx.fill();
 
       } else if (p.type === 'flash') {
-        // Player muzzle flash
-        ctx.globalAlpha = clamp(p.t / 0.14, 0, 0.9);
-        ctx.fillStyle = '#FFEE88';
-        ctx.beginPath(); ctx.arc(p.x, p.y, 32, 0, Math.PI * 2); ctx.fill();
+        // Player muzzle flash — multi-layer cinematic flash
+        const ft = clamp(p.t / 0.14, 0, 1);
+        // Outer glow (warm orange)
+        ctx.globalAlpha = ft * 0.5;
+        const outerGlow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 44);
+        outerGlow.addColorStop(0,   'rgba(255,180,60,0.8)');
+        outerGlow.addColorStop(0.4, 'rgba(255,120,20,0.4)');
+        outerGlow.addColorStop(1,   'rgba(255,80,0,0)');
+        ctx.fillStyle = outerGlow;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 44, 0, Math.PI * 2); ctx.fill();
+        // Mid flash (bright yellow)
+        ctx.globalAlpha = ft * 0.85;
+        const midFlash = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 24);
+        midFlash.addColorStop(0,   '#FFFFFF');
+        midFlash.addColorStop(0.3, '#FFF8D0');
+        midFlash.addColorStop(0.7, '#FFDD60');
+        midFlash.addColorStop(1,   'rgba(255,180,40,0)');
+        ctx.fillStyle = midFlash;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 24, 0, Math.PI * 2); ctx.fill();
+        // Core (white-hot)
+        ctx.globalAlpha = ft;
         ctx.fillStyle = '#FFFFFF';
-        ctx.beginPath(); ctx.arc(p.x, p.y, 16, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI * 2); ctx.fill();
+        // Spark streaks (directional)
+        ctx.globalAlpha = ft * 0.6;
+        ctx.strokeStyle = '#FFE080';
+        ctx.lineWidth = 1.5;
+        for (let si = 0; si < 5; si++) {
+          const sa = (si / 5) * Math.PI * 2 + p.t * 8;
+          const sl = 12 + Math.sin(si * 3.7) * 10;
+          ctx.beginPath();
+          ctx.moveTo(p.x + Math.cos(sa) * 8, p.y + Math.sin(sa) * 8);
+          ctx.lineTo(p.x + Math.cos(sa) * sl, p.y + Math.sin(sa) * sl);
+          ctx.stroke();
+        }
 
       } else if (p.type === 'eflash') {
         // Enemy muzzle flash

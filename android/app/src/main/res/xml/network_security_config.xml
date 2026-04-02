@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Network security configuration for Western Shooter.
+    Allows cleartext traffic to localhost so that the Capacitor dev server works
+    during development. In production the app loads from bundled assets (file://)
+    so no external network access is required.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+    </domain-config>
+</network-security-config>
